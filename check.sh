@@ -11,8 +11,12 @@ bad() { echo "[FAIL] $1"; fail=1; }
 command -v python3 >/dev/null 2>&1 && ok "python3" || bad "python3 없음"
 command -v git >/dev/null 2>&1 && ok "git" || bad "git 없음"
 
-if [ -d ".venv" ]; then
-  ok ".venv 존재"
+venv_ready=0
+if [ -x ".venv/bin/python" ] && [ -f ".venv/bin/activate" ]; then
+  ok ".venv 정상"
+  venv_ready=1
+elif [ -d ".venv" ]; then
+  bad ".venv가 불완전함 - python3-venv 설치 후 ./setup.sh 재실행 필요"
 else
   bad ".venv 없음 - ./setup.sh 실행 필요"
 fi
@@ -29,9 +33,8 @@ else
   bad "requirements.txt 없음"
 fi
 
-if [ -d ".venv" ]; then
-  source .venv/bin/activate
-  python - <<'PY'
+if [ "$venv_ready" -eq 1 ]; then
+  .venv/bin/python - <<'PY'
 mods = ["numpy", "matplotlib", "cv2", "pyproj"]
 missing = []
 for m in mods:
