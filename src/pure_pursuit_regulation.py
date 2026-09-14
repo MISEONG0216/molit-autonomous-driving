@@ -16,6 +16,10 @@ Important:
 - Current speed feedback is estimated from GPS displacement so that this first
   compliant baseline does not depend on an undocumented Competition Vehicle
   Status binary parser.
+- Repeated GPS positions are ignored because GPS updates slower than the control
+  loop. Only fresh position changes are used to estimate speed.
+- A short moving average smooths GPS-derived speed, and a signed longitudinal
+  command rate limiter prevents rapid accel/brake switching.
 - Once the official Competition Vehicle Status packet format/port is verified,
   its x-direction velocity should replace GPS-derived speed for final control.
 - The lateral model intentionally keeps VEHICLE_LENGTH = 1.0 for this first
@@ -28,6 +32,7 @@ import argparse
 import math
 import sys
 import time
+from collections import deque
 from pathlib import Path
 
 import numpy as np
@@ -96,8 +101,7 @@ PATH_FILE = PROJECT_ROOT / "path" / "2026_molit_comp_global_path.txt"
 
 TARGET_SPEED_KMH = 5.0
 
-# These are deliberately conservative starting values.
-# Tune only after the first cmd_type=1 driving test.
+# Conservative starting values for the first cmd_type=1 validation.
 KP = 0.10
 KI = 0.025
 KD = 0.00
@@ -108,9 +112,16 @@ INTEGRAL_LIMIT = 20.0
 MAX_ACCEL_CMD = 0.30
 MAX_BRAKE_CMD = 0.45
 
-# GPS speed estimator filtering.
-SPEED_FILTER_ALPHA = 0.25
+# GPS is slower than the 15 Hz control loop. Reusing the same GPS position on
+# every control iteration creates artificial 0 -> spike -> 0 speed estimates.
+# Ignore unchanged positions and average only fresh displacement samples.
+GPS_POSITION_CHANGE_EPS_M = 0.01
+GPS_SPEED_WINDOW = 5
 GPS_SPEED_MAX_VALID_KMH = 120.0
+
+# Limit how quickly the signed longitudinal command can change.
+# +1.0 means accel, -1.0 means brake. This prevents rapid accel/brake toggling.
+LONGITUDINAL_CMD_RATE_PER_SEC = 0.80
 
 
 # ============================================================
@@ -215,20 +226,29 @@ class GpsSpeedEstimator:
         self.prev_x = None
         self.prev_y = None
         self.prev_time = None
+        self.speed_samples = deque(maxlen=GPS_SPEED_WINDOW)
         self.filtered_speed_kmh = 0.0
+        self.raw_speed_kmh = 0.0
 
     def update(self, x, y, now):
         if self.prev_x is None:
             self.prev_x = x
             self.prev_y = y
             self.prev_time = now
-            return self.filtered_speed_kmh
+            return self.filtered_speed_kmh, self.raw_speed_kmh, False
+
+        distance = math.hypot(x - self.prev_x, y - self.prev_y)
+
+        # The control loop is 15 Hz while GPS may update much more slowly.
+        # If MORAI returns the same last GPS sample, do not treat it as 0 km/h
+        # and, importantly, do not advance prev_time.
+        if distance < GPS_POSITION_CHANGE_EPS_M:
+            return self.filtered_speed_kmh, self.raw_speed_kmh, False
 
         dt = now - self.prev_time
         if dt <= 1e-4:
-            return self.filtered_speed_kmh
+            return self.filtered_speed_kmh, self.raw_speed_kmh, False
 
-        distance = math.hypot(x - self.prev_x, y - self.prev_y)
         raw_speed_kmh = (distance / dt) * 3.6
 
         self.prev_x = x
@@ -237,14 +257,13 @@ class GpsSpeedEstimator:
 
         # Reject clearly invalid GPS spikes.
         if raw_speed_kmh > GPS_SPEED_MAX_VALID_KMH:
-            return self.filtered_speed_kmh
+            return self.filtered_speed_kmh, self.raw_speed_kmh, False
 
-        self.filtered_speed_kmh = (
-            SPEED_FILTER_ALPHA * raw_speed_kmh
-            + (1.0 - SPEED_FILTER_ALPHA) * self.filtered_speed_kmh
-        )
+        self.raw_speed_kmh = raw_speed_kmh
+        self.speed_samples.append(raw_speed_kmh)
+        self.filtered_speed_kmh = sum(self.speed_samples) / len(self.speed_samples)
 
-        return self.filtered_speed_kmh
+        return self.filtered_speed_kmh, self.raw_speed_kmh, True
 
 
 # ============================================================
@@ -267,7 +286,6 @@ class SpeedPID:
         error = target_kmh - current_kmh
 
         if abs(error) <= SPEED_DEADBAND_KMH:
-            # Reduce integral wind-up close to target speed.
             self.integral *= 0.95
             self.prev_error = error
             return 0.0, 0.0, error, 0.0
@@ -295,6 +313,38 @@ class SpeedPID:
             brake = min(MAX_BRAKE_CMD, -output)
 
         return accel, brake, error, output
+
+
+# ============================================================
+# Longitudinal command rate limiter
+# ============================================================
+
+class LongitudinalCommandLimiter:
+    def __init__(self, rate_per_sec):
+        self.rate_per_sec = rate_per_sec
+        self.signed_command = 0.0
+
+    def reset(self):
+        self.signed_command = 0.0
+
+    def update(self, accel, brake, dt):
+        desired = accel if accel > 0.0 else -brake
+
+        max_delta = self.rate_per_sec * max(dt, 1e-3)
+        delta = desired - self.signed_command
+        delta = max(-max_delta, min(max_delta, delta))
+        self.signed_command += delta
+
+        # Respect the separate safety limits after rate limiting.
+        self.signed_command = max(
+            -MAX_BRAKE_CMD,
+            min(MAX_ACCEL_CMD, self.signed_command),
+        )
+
+        if self.signed_command >= 0.0:
+            return self.signed_command, 0.0, self.signed_command
+
+        return 0.0, -self.signed_command, self.signed_command
 
 
 # ============================================================
@@ -337,8 +387,6 @@ def main():
     if args.target_speed < 0.0:
         raise ValueError("target speed는 0 이상이어야 합니다.")
 
-    # The first compliant test is intentionally capped at 10 km/h.
-    # Remove/replace this guard only after the 5 km/h cmd_type=1 lap is proven.
     if args.target_speed > 10.0:
         raise ValueError(
             "초기 규정 준수 baseline은 10 km/h 이하만 허용합니다. "
@@ -350,7 +398,14 @@ def main():
     print("==============================================")
     print("[CTRL] ctrl_mode=2 / cmd_type=1 (accel, brake, steer)")
     print(f"[TARGET] {args.target_speed:.1f} km/h")
-    print("[SPEED] GPS displacement estimate (temporary baseline)")
+    print(
+        f"[SPEED] GPS fresh-sample moving average "
+        f"(window={GPS_SPEED_WINDOW})"
+    )
+    print(
+        f"[CMD] longitudinal rate limit = "
+        f"{LONGITUDINAL_CMD_RATE_PER_SEC:.2f}/s"
+    )
     print()
 
     if args.drive:
@@ -370,6 +425,9 @@ def main():
 
     speed_estimator = GpsSpeedEstimator()
     speed_pid = SpeedPID(KP, KI, KD)
+    command_limiter = LongitudinalCommandLimiter(
+        LONGITUDINAL_CMD_RATE_PER_SEC
+    )
 
     period = 1.0 / CONTROL_HZ
     prev_control_time = time.time()
@@ -412,7 +470,11 @@ def main():
             )
 
             now = time.time()
-            current_speed_kmh = speed_estimator.update(current_x, current_y, now)
+            (
+                current_speed_kmh,
+                raw_speed_kmh,
+                fresh_gps_speed,
+            ) = speed_estimator.update(current_x, current_y, now)
 
             nearest_index = find_nearest_waypoint(
                 global_path,
@@ -445,15 +507,21 @@ def main():
             dt_control = max(1e-3, now - prev_control_time)
             prev_control_time = now
 
-            accel_cmd, brake_cmd, speed_error, pid_output = speed_pid.update(
+            desired_accel, desired_brake, speed_error, pid_output = speed_pid.update(
                 target_speed_kmh,
                 current_speed_kmh,
                 dt_control,
             )
 
             if result is None:
-                accel_cmd = 0.0
-                brake_cmd = MAX_BRAKE_CMD
+                desired_accel = 0.0
+                desired_brake = MAX_BRAKE_CMD
+
+            accel_cmd, brake_cmd, signed_cmd = command_limiter.update(
+                desired_accel,
+                desired_brake,
+                dt_control,
+            )
 
             print("\033[2J\033[H", end="")
             print("==============================================")
@@ -489,9 +557,16 @@ def main():
 
             print()
             print(f"TARGET SPD: {target_speed_kmh:.2f} km/h")
+            print(f"RAW GPS SPD: {raw_speed_kmh:.2f} km/h")
             print(f"GPS SPEED : {current_speed_kmh:.2f} km/h")
+            print(f"GPS FRESH : {'YES' if fresh_gps_speed else 'NO'}")
             print(f"SPD ERROR : {speed_error:+.2f} km/h")
             print(f"PID OUT   : {pid_output:+.3f}")
+            print(
+                f"DESIRED   : accel={desired_accel:.3f}, "
+                f"brake={desired_brake:.3f}"
+            )
+            print(f"LONG CMD  : {signed_cmd:+.3f}")
             print(f"ACCEL     : {accel_cmd:.3f}")
             print(f"BRAKE     : {brake_cmd:.3f}")
             print("CMD MODE  : ctrl_mode=2 / cmd_type=1")
