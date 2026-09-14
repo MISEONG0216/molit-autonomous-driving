@@ -8,20 +8,22 @@ Safety strategy:
 - Reuse the already validated Competition Vehicle Status speed source.
 - Reuse the proven Pure Pursuit lateral controller and cmd_type=1 longitudinal controller.
 - Reuse path_speed_profile.py for curvature + preview profile generation.
-- DO NOT jump directly to the 57 km/h profile. Scale the profile while preserving
-  the relative slow-down pattern before curves.
+- Scale the profile while preserving the relative slow-down pattern before curves.
+- Automatically save compact CSV telemetry for every run.
 
 Validated stages:
 - 5~10 km/h profile: completed.
 
-Current next stage:
+Current stage:
 - allow an explicit 5~20 km/h profile test with --max-speed 20.
 - default remains 10 km/h so an accidental run does not increase test speed.
 """
 
 import argparse
+import csv
 import math
 import time
+from datetime import datetime
 
 import numpy as np
 
@@ -51,7 +53,6 @@ def build_test_profile(global_path, max_speed_kmh):
     full_min = float(np.min(full_profile))
     full_max = float(np.max(full_profile))
 
-    # Preserve the shape of the 15~57 km/h profile but map it to 5~max km/h.
     if full_max - full_min < 1e-6:
         test_profile = np.full_like(full_profile, max_speed_kmh)
     else:
@@ -61,6 +62,41 @@ def build_test_profile(global_path, max_speed_kmh):
         )
 
     return test_profile, radius, full_profile
+
+
+def open_run_log(max_speed_kmh, drive_mode):
+    """Create a compact CSV telemetry file under PROJECT_ROOT/logs."""
+    log_dir = base.PROJECT_ROOT / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    mode = "drive" if drive_mode else "dryrun"
+    speed_tag = f"{max_speed_kmh:g}kph"
+    log_path = log_dir / f"run_{timestamp}_{speed_tag}_{mode}.csv"
+
+    log_file = open(log_path, "w", newline="", buffering=1)
+    writer = csv.writer(log_file)
+    writer.writerow([
+        "elapsed_sec",
+        "waypoint_index",
+        "x_m",
+        "y_m",
+        "yaw_deg",
+        "path_dist_m",
+        "curve_radius_m",
+        "full_profile_kmh",
+        "target_speed_kmh",
+        "comp_speed_kmh",
+        "speed_error_kmh",
+        "ctrl_zone",
+        "steering_rad",
+        "steering_deg",
+        "long_cmd",
+        "accel_cmd",
+        "brake_cmd",
+    ])
+    log_file.flush()
+    return log_path, log_file, writer
 
 
 def main():
@@ -92,6 +128,9 @@ def main():
         args.max_speed,
     )
 
+    log_path, log_file, log_writer = open_run_log(args.max_speed, args.drive)
+    run_start_time = time.time()
+
     print("====================================================")
     print(" WAYPOINT SPEED PROFILE - STAGED TEST")
     print("====================================================")
@@ -100,6 +139,7 @@ def main():
     print(f"[PROFILE] {TEST_MIN_KMH:.1f} ~ {args.max_speed:.1f} km/h")
     print("[NOTE] 57 km/h full profile is NOT enabled in this test.")
     print("[MODE] DRIVE" if args.drive else "[MODE] DRY-RUN")
+    print(f"[LOG] {log_path}")
     print()
 
     gps_receiver = Receiver(base.GPS_IP, base.GPS_PORT, GPS())
@@ -199,6 +239,27 @@ def main():
 
             radius_m = float(radius_profile[nearest_index])
             full_target = float(full_profile[nearest_index])
+            elapsed_sec = now - run_start_time
+
+            log_writer.writerow([
+                f"{elapsed_sec:.3f}",
+                nearest_index,
+                f"{current_x:.3f}",
+                f"{current_y:.3f}",
+                f"{math.degrees(yaw):.3f}",
+                f"{nearest_distance:.3f}",
+                "inf" if not math.isfinite(radius_m) else f"{radius_m:.3f}",
+                f"{full_target:.3f}",
+                f"{target_speed_kmh:.3f}",
+                f"{current_speed_kmh:.3f}",
+                f"{speed_error:.3f}",
+                control_zone,
+                f"{steering:.6f}",
+                f"{math.degrees(steering):.3f}",
+                f"{signed_cmd:.4f}",
+                f"{accel_cmd:.4f}",
+                f"{brake_cmd:.4f}",
+            ])
 
             print("\033[2J\033[H", end="")
             print("====================================================")
@@ -225,6 +286,7 @@ def main():
             print(f"ACCEL      : {accel_cmd:.3f}")
             print(f"BRAKE      : {brake_cmd:.3f}")
             print("CMD MODE   : ctrl_mode=2 / cmd_type=1")
+            print(f"LOG FILE   : {log_path.name}")
             print()
 
             if args.drive:
@@ -250,6 +312,10 @@ def main():
         if args.drive and ctrl_sender is not None:
             print("정지 명령 송신 (cmd_type=1 / brake=1.0)")
             base.send_stop(ctrl_sender)
+    finally:
+        log_file.flush()
+        log_file.close()
+        print(f"[LOG SAVED] {log_path}")
 
 
 if __name__ == "__main__":
