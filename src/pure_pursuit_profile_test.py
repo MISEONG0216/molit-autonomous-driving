@@ -2,17 +2,21 @@
 # -*- coding: utf-8 -*-
 
 """
-First waypoint-speed-profile integration test.
+Waypoint-speed-profile integration test.
 
 Safety strategy:
 - Reuse the already validated Competition Vehicle Status speed source.
 - Reuse the proven Pure Pursuit lateral controller and cmd_type=1 longitudinal controller.
 - Reuse path_speed_profile.py for curvature + preview profile generation.
-- DO NOT jump directly to the 57 km/h profile. Scale the profile so its straight
-  ceiling is 10 km/h for this first integration test while preserving the
-  relative slow-down pattern before curves.
+- DO NOT jump directly to the 57 km/h profile. Scale the profile while preserving
+  the relative slow-down pattern before curves.
 
-After this stage is validated, raise the ceiling progressively in later tests.
+Validated stages:
+- 5~10 km/h profile: completed.
+
+Current next stage:
+- allow an explicit 5~20 km/h profile test with --max-speed 20.
+- default remains 10 km/h so an accidental run does not increase test speed.
 """
 
 import argparse
@@ -31,12 +35,13 @@ from lib.define.IMU import IMU
 from lib.define.EgoCtrlCmd import EgoCtrlCmd
 
 
-FIRST_TEST_MAX_KMH = 10.0
-FIRST_TEST_MIN_KMH = 5.0
+DEFAULT_TEST_MAX_KMH = 10.0
+ALLOWED_TEST_MAX_KMH = 20.0
+TEST_MIN_KMH = 5.0
 
 
 def build_test_profile(global_path, max_speed_kmh):
-    """Build the existing preview profile, then scale it for a low-speed test."""
+    """Build the existing preview profile, then scale it for a staged-speed test."""
     _, ds = profile_builder.cumulative_distance(global_path)
     curvature = profile_builder.compute_curvature(global_path)
     radius = profile_builder.curvature_to_radius(curvature)
@@ -51,8 +56,8 @@ def build_test_profile(global_path, max_speed_kmh):
         test_profile = np.full_like(full_profile, max_speed_kmh)
     else:
         normalized = (full_profile - full_min) / (full_max - full_min)
-        test_profile = FIRST_TEST_MIN_KMH + normalized * (
-            max_speed_kmh - FIRST_TEST_MIN_KMH
+        test_profile = TEST_MIN_KMH + normalized * (
+            max_speed_kmh - TEST_MIN_KMH
         )
 
     return test_profile, radius, full_profile
@@ -68,17 +73,17 @@ def main():
     parser.add_argument(
         "--max-speed",
         type=float,
-        default=FIRST_TEST_MAX_KMH,
-        help="첫 프로파일 통합 테스트의 직선 최고 목표속도(km/h), 기본 10",
+        default=DEFAULT_TEST_MAX_KMH,
+        help="프로파일 테스트의 직선 최고 목표속도(km/h), 기본 10 / 현재 허용 최대 20",
     )
     args = parser.parse_args()
 
-    if args.max_speed < FIRST_TEST_MIN_KMH:
+    if args.max_speed < TEST_MIN_KMH:
         raise ValueError("--max-speed는 5 km/h 이상이어야 합니다.")
-    if args.max_speed > FIRST_TEST_MAX_KMH:
+    if args.max_speed > ALLOWED_TEST_MAX_KMH:
         raise ValueError(
-            "첫 프로파일 통합 검증에서는 10 km/h를 넘기지 않습니다. "
-            "검증 후 단계적으로 상향하세요."
+            "현재 단계에서는 20 km/h를 넘기지 않습니다. "
+            "20 km/h 감속/조향 검증 후 단계적으로 상향하세요."
         )
 
     global_path = base.load_path(base.PATH_FILE)
@@ -88,11 +93,11 @@ def main():
     )
 
     print("====================================================")
-    print(" WAYPOINT SPEED PROFILE - FIRST INTEGRATION TEST")
+    print(" WAYPOINT SPEED PROFILE - STAGED TEST")
     print("====================================================")
     print("[CTRL] ctrl_mode=2 / cmd_type=1")
     print("[SPEED] Competition Vehicle Status / signed_vel")
-    print(f"[PROFILE] {FIRST_TEST_MIN_KMH:.1f} ~ {args.max_speed:.1f} km/h")
+    print(f"[PROFILE] {TEST_MIN_KMH:.1f} ~ {args.max_speed:.1f} km/h")
     print("[NOTE] 57 km/h full profile is NOT enabled in this test.")
     print("[MODE] DRIVE" if args.drive else "[MODE] DRY-RUN")
     print()
