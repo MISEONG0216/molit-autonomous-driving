@@ -1,53 +1,89 @@
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = 'Stop'
 
-Set-Location $PSScriptRoot
+Set-Location -LiteralPath $PSScriptRoot
 
-$MoraiDir = "third_party/MORAI-NetworkModule"
-$MoraiRepo = "https://github.com/MORAI-Autonomous/MORAI-NetworkModule.git"
-$MoraiRef = "24.R2.0"
+$MoraiDir = Join-Path $PSScriptRoot 'third_party\MORAI-NetworkModule'
+$MoraiRepo = 'https://github.com/MORAI-Autonomous/MORAI-NetworkModule.git'
+$MoraiRef = '24.R2.0'
+$VenvDir = Join-Path $PSScriptRoot '.venv'
+$VenvPython = Join-Path $VenvDir 'Scripts\python.exe'
+$Requirements = Join-Path $PSScriptRoot 'requirements.txt'
 
-Write-Host "[1/5] Python 확인"
-$pythonCmd = $null
-if (Get-Command py -ErrorAction SilentlyContinue) {
-    $pythonCmd = "py"
-} elseif (Get-Command python -ErrorAction SilentlyContinue) {
-    $pythonCmd = "python"
-} else {
-    throw "Python을 찾을 수 없습니다. Python 3.8.x를 설치하고 PATH에 추가한 뒤 다시 실행하세요."
+Write-Host '[1/6] Checking Git'
+if (-not (Get-Command git.exe -ErrorAction SilentlyContinue)) {
+    throw 'Git was not found. Install Git for Windows and reopen PowerShell.'
+}
+git --version
+
+Write-Host '[2/6] Checking Python'
+$PythonExe = $null
+$PythonPrefix = @()
+
+if (Get-Command py.exe -ErrorAction SilentlyContinue) {
+    $PythonExe = 'py.exe'
+    $PythonPrefix = @('-3')
+}
+elseif (Get-Command python.exe -ErrorAction SilentlyContinue) {
+    $PythonExe = 'python.exe'
+}
+else {
+    throw 'Python 3 was not found. Install Python and enable Add Python to PATH.'
 }
 
-& $pythonCmd --version
+& $PythonExe @PythonPrefix --version
+if ($LASTEXITCODE -ne 0) {
+    throw 'Python 3 could not be started.'
+}
 
-Write-Host "[2/5] 가상환경 생성"
-if (-not (Test-Path ".venv/Scripts/python.exe")) {
-    if (Test-Path ".venv") {
-        Remove-Item -Recurse -Force ".venv"
+Write-Host '[3/6] Creating virtual environment'
+if (-not (Test-Path -LiteralPath $VenvPython)) {
+    if (Test-Path -LiteralPath $VenvDir) {
+        Remove-Item -LiteralPath $VenvDir -Recurse -Force
     }
-    & $pythonCmd -m venv .venv
+    & $PythonExe @PythonPrefix -m venv $VenvDir
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Failed to create .venv.'
+    }
 }
 
-$VenvPython = Join-Path $PSScriptRoot ".venv/Scripts/python.exe"
+if (-not (Test-Path -LiteralPath $VenvPython)) {
+    throw '.venv\Scripts\python.exe was not created.'
+}
 
-Write-Host "[3/5] Python 라이브러리 설치"
+Write-Host '[4/6] Installing Python packages'
 & $VenvPython -m pip install --upgrade pip
-& $VenvPython -m pip install -r requirements.txt
+if ($LASTEXITCODE -ne 0) { throw 'pip upgrade failed.' }
+& $VenvPython -m pip install -r $Requirements
+if ($LASTEXITCODE -ne 0) { throw 'requirements installation failed.' }
 
-Write-Host "[4/5] MORAI 공식 Network Module 준비"
-New-Item -ItemType Directory -Force -Path "third_party" | Out-Null
-if (-not (Test-Path "$MoraiDir/.git")) {
-    if (Test-Path $MoraiDir) {
-        Remove-Item -Recurse -Force $MoraiDir
+Write-Host '[5/6] Preparing MORAI Network Module 24.R2.0'
+$ThirdPartyDir = Join-Path $PSScriptRoot 'third_party'
+New-Item -ItemType Directory -Force -Path $ThirdPartyDir | Out-Null
+$MoraiGitDir = Join-Path $MoraiDir '.git'
+
+if (-not (Test-Path -LiteralPath $MoraiGitDir)) {
+    if (Test-Path -LiteralPath $MoraiDir) {
+        Remove-Item -LiteralPath $MoraiDir -Recurse -Force
     }
     git clone --depth 1 --branch $MoraiRef $MoraiRepo $MoraiDir
-} else {
-    Write-Host "MORAI Network Module이 이미 존재합니다: $MoraiDir"
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Failed to clone MORAI-NetworkModule.'
+    }
+}
+else {
+    Write-Host ('MORAI Network Module already exists: ' + $MoraiDir)
 }
 
-Write-Host "[5/5] 설치 확인"
+Write-Host '[6/6] Verifying installation'
 & $VenvPython -c "import numpy, pyproj; print('Python packages OK')"
+if ($LASTEXITCODE -ne 0) {
+    throw 'Python package verification failed.'
+}
 
-Write-Host ""
-Write-Host "Windows 초기 설정 완료"
-Write-Host "다음 단계: MORAI UDP 설정 후 .\run_windows.ps1 gps"
-Write-Host "PowerShell 실행 정책 오류가 나면 현재 창에서 다음을 실행하세요:"
-Write-Host "  Set-ExecutionPolicy -Scope Process Bypass"
+Write-Host ''
+Write-Host 'Windows setup completed.'
+Write-Host 'Next: configure MORAI UDP, then run:'
+Write-Host '  .\run_windows.ps1 gps'
+Write-Host ''
+Write-Host 'If PowerShell blocks scripts, run this once in the current window:'
+Write-Host '  Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass'
