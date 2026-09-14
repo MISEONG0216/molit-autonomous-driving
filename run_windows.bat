@@ -34,6 +34,21 @@ if /I "%~1"=="pure-pursuit-drive" (
     exit /b %errorlevel%
 )
 
+if /I "%~1"=="traffic-light" (
+    .venv\Scripts\python.exe src\traffic_light_detector.py
+    exit /b %errorlevel%
+)
+
+if /I "%~1"=="traffic-light-dry" (
+    .venv\Scripts\python.exe src\pure_pursuit_udp.py --traffic-light
+    exit /b %errorlevel%
+)
+
+if /I "%~1"=="traffic-light-drive" (
+    .venv\Scripts\python.exe src\pure_pursuit_udp.py --drive --traffic-light
+    exit /b %errorlevel%
+)
+
 :usage
 echo Usage:
 echo   run_windows.bat gps                 - GPS UDP receive test
@@ -41,4 +56,7 @@ echo   run_windows.bat imu                 - IMU UDP receive test
 echo   run_windows.bat ctrl                - low-speed control test
 echo   run_windows.bat pure-pursuit        - Pure Pursuit dry run
 echo   run_windows.bat pure-pursuit-drive  - Pure Pursuit actual drive
+echo   run_windows.bat traffic-light       - camera vehicle-signal detector
+echo   run_windows.bat traffic-light-dry   - signal integration dry run
+echo   run_windows.bat traffic-light-drive - signal-aware actual drive
 exit /b 1

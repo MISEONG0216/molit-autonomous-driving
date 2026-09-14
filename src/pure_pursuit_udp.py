@@ -5,6 +5,7 @@ import sys
 import time
 import math
 import argparse
+import socket
 from pathlib import Path
 
 import numpy as np
@@ -38,6 +39,11 @@ IMU_PORT = 1111
 
 CTRL_IP = "127.0.0.1"
 CTRL_PORT = 9093
+
+# traffic_light_detector.py가 보내는 로컬 판단값 수신
+SIGNAL_IP = "127.0.0.1"
+SIGNAL_PORT = 9300
+SIGNAL_TIMEOUT_SEC = 5.0
 
 
 # ============================================================
@@ -249,6 +255,12 @@ def main():
         help="실제 CtrlCmd를 MORAI로 송신"
     )
 
+    parser.add_argument(
+        "--traffic-light",
+        action="store_true",
+        help="차량 신호등 판단(STOP/GO)을 속도 제어에 적용"
+    )
+
     args = parser.parse_args()
 
     print("==============================================")
@@ -261,6 +273,9 @@ def main():
     else:
         print("[MODE] DRY-RUN")
         print("제어 명령을 송신하지 않습니다.")
+
+    if args.traffic_light:
+        print(f"[SIGNAL] traffic-light decision {SIGNAL_IP}:{SIGNAL_PORT}")
 
     print()
 
@@ -294,6 +309,17 @@ def main():
 
     ctrl_sender = None
 
+    signal_receiver = None
+    signal_state = "UNKNOWN"
+    signal_stop_latched = False
+    signal_last_update = 0.0
+
+    if args.traffic_light:
+        signal_receiver = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        signal_receiver.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        signal_receiver.bind((SIGNAL_IP, SIGNAL_PORT))
+        signal_receiver.setblocking(False)
+
     if args.drive:
         ctrl_sender = Sender(
             CTRL_IP,
@@ -307,6 +333,33 @@ def main():
         while True:
 
             loop_start = time.time()
+
+            # ------------------------------------------------
+            # 차량 신호등 판단
+            # ------------------------------------------------
+
+            if signal_receiver is not None:
+                while True:
+                    try:
+                        raw_signal, _ = signal_receiver.recvfrom(64)
+                        received_signal = raw_signal.decode("ascii", errors="ignore").strip().upper()
+                        if received_signal in ("STOP", "GO", "GO_LEFT", "UNKNOWN"):
+                            signal_state = received_signal
+                            signal_last_update = time.time()
+                            if signal_state == "STOP":
+                                signal_stop_latched = True
+                            elif signal_state in ("GO", "GO_LEFT"):
+                                signal_stop_latched = False
+                    except BlockingIOError:
+                        break
+
+            signal_link_ok = (
+                not args.traffic_light
+                or (
+                    signal_last_update > 0.0
+                    and time.time() - signal_last_update <= SIGNAL_TIMEOUT_SEC
+                )
+            )
 
             # ------------------------------------------------
             # GPS
@@ -443,6 +496,10 @@ def main():
                 steering = result["steering"]
                 velocity = TARGET_SPEED_KMH
 
+                # 적색/황색 정지는 확실한 녹색이 올 때까지 유지한다.
+                if args.traffic_light and (signal_stop_latched or not signal_link_ok):
+                    velocity = 0.0
+
                 print(
                     f"LOOKAHEAD : "
                     f"index={result['target_index']}"
@@ -472,6 +529,14 @@ def main():
                 )
 
             print()
+
+            if args.traffic_light:
+                signal_age = time.time() - signal_last_update if signal_last_update else float("inf")
+                age_text = "WAIT" if not math.isfinite(signal_age) else f"{signal_age:.1f}s"
+                print(f"SIGNAL    : {signal_state} (age={age_text})")
+                print(f"SIGNAL LINK: {'OK' if signal_link_ok else 'WAIT/STALE'}")
+                print(f"STOP LATCH: {'ON' if signal_stop_latched else 'OFF'}")
+                print()
 
             if args.drive:
                 print(
@@ -523,6 +588,9 @@ def main():
         if args.drive and ctrl_sender is not None:
             print("정지 명령 송신")
             send_stop(ctrl_sender)
+
+        if signal_receiver is not None:
+            signal_receiver.close()
 
         print("프로그램 종료")
 
