@@ -17,7 +17,9 @@ Important:
   compliant baseline does not depend on an undocumented Competition Vehicle
   Status binary parser.
 - Repeated GPS positions are ignored because GPS updates slower than the control
-  loop. Only fresh position changes are used to estimate speed.
+  loop. Only fresh speed measurements are allowed to update the speed controller.
+- If the position does not change for a short timeout, the temporary GPS speed
+  estimator reports 0 km/h so a stale high speed cannot keep braking forever.
 - A short moving average smooths GPS-derived speed, and a signed longitudinal
   command rate limiter prevents rapid accel/brake switching.
 - Once the official Competition Vehicle Status packet format/port is verified,
@@ -101,16 +103,19 @@ PATH_FILE = PROJECT_ROOT / "path" / "2026_molit_comp_global_path.txt"
 
 TARGET_SPEED_KMH = 5.0
 
-# Conservative starting values for the first cmd_type=1 validation.
+# Temporary GPS-speed controller.
+# Keep it deliberately simple until Competition Vehicle Status speed is used.
 KP = 0.10
-KI = 0.025
+KI = 0.00
 KD = 0.00
 
-SPEED_DEADBAND_KMH = 0.20
+SPEED_DEADBAND_KMH = 0.30
 INTEGRAL_LIMIT = 20.0
 
 MAX_ACCEL_CMD = 0.30
-MAX_BRAKE_CMD = 0.45
+# Keep normal speed-control braking gentle at this 5 km/h validation stage.
+# Emergency/exit stop still sends brake=1.0 in send_stop().
+MAX_BRAKE_CMD = 0.12
 
 # GPS is slower than the 15 Hz control loop. Reusing the same GPS position on
 # every control iteration creates artificial 0 -> spike -> 0 speed estimates.
@@ -118,6 +123,11 @@ MAX_BRAKE_CMD = 0.45
 GPS_POSITION_CHANGE_EPS_M = 0.01
 GPS_SPEED_WINDOW = 5
 GPS_SPEED_MAX_VALID_KMH = 120.0
+
+# If no measurable position change is seen for this long, consider the vehicle
+# stationary. This prevents a stale filtered speed above target from applying
+# brake forever after the vehicle has already stopped.
+GPS_STATIONARY_TIMEOUT_SEC = 0.50
 
 # Limit how quickly the signed longitudinal command can change.
 # +1.0 means accel, -1.0 means brake. This prevents rapid accel/brake toggling.
@@ -231,23 +241,40 @@ class GpsSpeedEstimator:
         self.raw_speed_kmh = 0.0
 
     def update(self, x, y, now):
+        # Seed the controller with one explicit 0 km/h speed measurement so
+        # the vehicle can start moving without repeatedly integrating stale data.
         if self.prev_x is None:
             self.prev_x = x
             self.prev_y = y
             self.prev_time = now
-            return self.filtered_speed_kmh, self.raw_speed_kmh, False
+            self.speed_samples.clear()
+            self.speed_samples.append(0.0)
+            self.filtered_speed_kmh = 0.0
+            self.raw_speed_kmh = 0.0
+            return self.filtered_speed_kmh, self.raw_speed_kmh, True, "INIT"
 
         distance = math.hypot(x - self.prev_x, y - self.prev_y)
 
-        # The control loop is 15 Hz while GPS may update much more slowly.
-        # If MORAI returns the same last GPS sample, do not treat it as 0 km/h
-        # and, importantly, do not advance prev_time.
+        # MORAI may expose the same latest GPS sample over several 15 Hz control
+        # iterations. Do not feed that stale speed to PID repeatedly.
         if distance < GPS_POSITION_CHANGE_EPS_M:
-            return self.filtered_speed_kmh, self.raw_speed_kmh, False
+            stale_time = now - self.prev_time
+
+            # If there has been no measurable motion for long enough, publish
+            # one 0 km/h measurement and restart the stationary timer.
+            if stale_time >= GPS_STATIONARY_TIMEOUT_SEC:
+                self.prev_time = now
+                self.raw_speed_kmh = 0.0
+                self.speed_samples.clear()
+                self.speed_samples.append(0.0)
+                self.filtered_speed_kmh = 0.0
+                return self.filtered_speed_kmh, self.raw_speed_kmh, True, "STOP"
+
+            return self.filtered_speed_kmh, self.raw_speed_kmh, False, "HOLD"
 
         dt = now - self.prev_time
         if dt <= 1e-4:
-            return self.filtered_speed_kmh, self.raw_speed_kmh, False
+            return self.filtered_speed_kmh, self.raw_speed_kmh, False, "HOLD"
 
         raw_speed_kmh = (distance / dt) * 3.6
 
@@ -257,13 +284,13 @@ class GpsSpeedEstimator:
 
         # Reject clearly invalid GPS spikes.
         if raw_speed_kmh > GPS_SPEED_MAX_VALID_KMH:
-            return self.filtered_speed_kmh, self.raw_speed_kmh, False
+            return self.filtered_speed_kmh, self.raw_speed_kmh, False, "REJECT"
 
         self.raw_speed_kmh = raw_speed_kmh
         self.speed_samples.append(raw_speed_kmh)
         self.filtered_speed_kmh = sum(self.speed_samples) / len(self.speed_samples)
 
-        return self.filtered_speed_kmh, self.raw_speed_kmh, True
+        return self.filtered_speed_kmh, self.raw_speed_kmh, True, "MOVE"
 
 
 # ============================================================
@@ -406,6 +433,11 @@ def main():
         f"[CMD] longitudinal rate limit = "
         f"{LONGITUDINAL_CMD_RATE_PER_SEC:.2f}/s"
     )
+    print("[PID] update only on fresh speed measurement")
+    print(
+        f"[BRAKE] normal control cap={MAX_BRAKE_CMD:.2f}, "
+        f"stationary timeout={GPS_STATIONARY_TIMEOUT_SEC:.2f}s"
+    )
     print()
 
     if args.drive:
@@ -431,6 +463,12 @@ def main():
 
     period = 1.0 / CONTROL_HZ
     prev_control_time = time.time()
+
+    # Hold the most recent controller result between fresh GPS speed updates.
+    desired_accel = 0.0
+    desired_brake = 0.0
+    speed_error = args.target_speed
+    pid_output = 0.0
 
     try:
         while True:
@@ -474,6 +512,7 @@ def main():
                 current_speed_kmh,
                 raw_speed_kmh,
                 fresh_gps_speed,
+                speed_state,
             ) = speed_estimator.update(current_x, current_y, now)
 
             nearest_index = find_nearest_waypoint(
@@ -507,11 +546,23 @@ def main():
             dt_control = max(1e-3, now - prev_control_time)
             prev_control_time = now
 
-            desired_accel, desired_brake, speed_error, pid_output = speed_pid.update(
-                target_speed_kmh,
-                current_speed_kmh,
-                dt_control,
-            )
+            # CRITICAL: only update PID state when the speed measurement itself
+            # is new. Re-running PID at 15 Hz against one stale 5 Hz GPS speed
+            # was integrating the same negative error repeatedly and increasing
+            # brake even though no new speed information had arrived.
+            if fresh_gps_speed:
+                (
+                    desired_accel,
+                    desired_brake,
+                    speed_error,
+                    pid_output,
+                ) = speed_pid.update(
+                    target_speed_kmh,
+                    current_speed_kmh,
+                    max(dt_control, 1.0 / 5.0),
+                )
+            else:
+                speed_error = target_speed_kmh - current_speed_kmh
 
             if result is None:
                 desired_accel = 0.0
@@ -560,6 +611,7 @@ def main():
             print(f"RAW GPS SPD: {raw_speed_kmh:.2f} km/h")
             print(f"GPS SPEED : {current_speed_kmh:.2f} km/h")
             print(f"GPS FRESH : {'YES' if fresh_gps_speed else 'NO'}")
+            print(f"SPD STATE : {speed_state}")
             print(f"SPD ERROR : {speed_error:+.2f} km/h")
             print(f"PID OUT   : {pid_output:+.3f}")
             print(
