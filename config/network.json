@@ -9,7 +9,7 @@
   },
   "control": {
     "ip": "192.168.0.10",
-    "port": 9094
+    "port": 9093
   },
   "pure_pursuit": {
     "lookahead_distance_m": 2.35,
