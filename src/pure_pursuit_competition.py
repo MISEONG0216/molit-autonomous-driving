@@ -33,7 +33,7 @@ from lib.define.EgoCtrlCmd import EgoCtrlCmd
 from lib.define.EgoVehicleStatus import EgoVehicleStatus
 
 
-COMP_STATUS_IP = "127.0.0.1"
+COMP_STATUS_IP = "0.0.0.0"
 COMP_STATUS_PORT = 1909
 COMP_STATUS_HEADER = b"#MoraiInfo$"
 COMP_STATUS_DATA_LENGTH = 152
