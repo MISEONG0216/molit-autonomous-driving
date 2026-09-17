@@ -55,10 +55,10 @@ from lib.define.EgoCtrlCmd import EgoCtrlCmd
 # MORAI UDP settings
 # ============================================================
 
-GPS_IP = "127.0.0.1"
+GPS_IP = "0.0.0.0"
 GPS_PORT = 9201
 
-IMU_IP = "127.0.0.1"
+IMU_IP = "0.0.0.0"
 IMU_PORT = 1111
 
 CTRL_IP = "127.0.0.1"
