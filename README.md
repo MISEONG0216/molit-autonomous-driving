@@ -527,3 +527,104 @@ git pull
 개별 기능 개발은 가능하면 별도 branch에서 진행하고 검증 후 `main`에 반영합니다.
 
 현재 `main`은 다른 팀원이 바로 테스트할 수 있는 기준 주행 코드를 유지합니다.
+
+
+---
+
+# 13. 팀원 GitHub SSH 최초 설정
+
+이 저장소는 Private 저장소이므로 GitHub 인증이 필요합니다. 매번 Username/PAT를 입력하지 않도록 팀에서는 **SSH 인증 사용을 권장**합니다.
+
+> 각 팀원은 **자기 PC에서 자기 SSH 키를 생성하여 자기 GitHub 계정에 등록**합니다. 팀 공용 개인키를 공유하지 않습니다.
+
+## Ubuntu
+
+SSH 키 생성:
+
+```bash
+ssh-keygen -t ed25519 -C "본인_GitHub_이메일"
+```
+
+기본 저장 위치를 사용할 경우 Enter를 누릅니다. 이후 SSH agent에 키를 등록하고 공개키를 확인합니다.
+
+```bash
+eval "$(ssh-agent -s)"
+ssh-add ~/.ssh/id_ed25519
+cat ~/.ssh/id_ed25519.pub
+```
+
+출력된 `ssh-ed25519 ...` 전체를 GitHub의 **Settings → SSH and GPG keys → New SSH key**에 등록합니다.
+
+> `~/.ssh/id_ed25519`은 개인키이므로 절대 GitHub, Discord 등에 공유하거나 업로드하지 않습니다. 등록하는 것은 `id_ed25519.pub` 공개키뿐입니다.
+
+연결 확인:
+
+```bash
+ssh -T git@github.com
+```
+
+처음 연결할 때 host authenticity 확인이 나오면 GitHub가 공개한 SSH host fingerprint와 일치하는지 확인한 뒤 진행합니다.
+
+기존에 HTTPS로 clone한 저장소는 한 번만 remote를 SSH로 변경합니다.
+
+```bash
+cd ~/molit-autonomous-driving
+git remote set-url origin git@github.com:MISEONG0216/molit-autonomous-driving.git
+git remote -v
+```
+
+정상 설정:
+
+```text
+origin  git@github.com:MISEONG0216/molit-autonomous-driving.git (fetch)
+origin  git@github.com:MISEONG0216/molit-autonomous-driving.git (push)
+```
+
+## Windows
+
+**Git Bash**에서 SSH 키를 생성합니다.
+
+```bash
+ssh-keygen -t ed25519 -C "본인_GitHub_이메일"
+cat ~/.ssh/id_ed25519.pub
+```
+
+출력된 공개키를 GitHub의 **Settings → SSH and GPG keys → New SSH key**에 등록합니다.
+
+연결 확인:
+
+```bash
+ssh -T git@github.com
+```
+
+기존 HTTPS 저장소는 저장소 폴더에서 다음을 한 번 실행합니다.
+
+```bash
+git remote set-url origin git@github.com:MISEONG0216/molit-autonomous-driving.git
+git remote -v
+```
+
+## 새로 Clone하는 팀원
+
+SSH 설정을 완료한 뒤 HTTPS 주소 대신 다음 주소를 사용합니다.
+
+```bash
+git clone git@github.com:MISEONG0216/molit-autonomous-driving.git
+cd molit-autonomous-driving
+```
+
+## 이후 일반 작업
+
+SSH 최초 설정을 완료하면 매번 PAT를 새로 발급하거나 입력할 필요 없이 일반 Git 명령을 사용합니다.
+
+```bash
+git switch main
+git pull
+
+# 작업 후
+git add .
+git commit -m "작업 내용"
+git push
+```
+
+개별 기능은 가능하면 별도 branch에서 개발하고 검증 후 `main`에 반영합니다.
