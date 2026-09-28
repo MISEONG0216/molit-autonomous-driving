@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-LiDAR 1 -> 2 -> 3 Integration Pipeline
+LiDAR 1 -> 2 -> 3 -> Adapter Integration Pipeline
 
 #1 LiDAR Receiver / Parser / Preprocess
     MORAI VLP16 UDP
@@ -18,24 +18,28 @@ LiDAR 1 -> 2 -> 3 Integration Pipeline
     -> velocity estimation
     -> static / dynamic classification
 
-Coordinate conversion
----------------------
-#1 LiDAR coordinates:
-    +X = Right
-    +Y = Forward
-    +Z = Up
+Adapter
+    #3 vehicle-relative obstacle
+    -> #4 planner-compatible global obstacle format
 
-#2 / #3 coordinates:
-    +X = Forward
-    +Y = Left
-    +Z = Up
+IMPORTANT
+---------
+This test does NOT use real GPS / IMU yet.
 
-Important:
-    Ego-motion compensation is NOT connected yet.
-    Therefore velocity / dynamic classification is only reliable
-    while the ego vehicle is stationary.
+For adapter integration testing only:
+
+    ego_x   = 100.0
+    ego_y   = 200.0
+    ego_yaw = 0 deg
+
+Therefore the resulting global obstacle coordinates are TEST coordinates,
+not actual MORAI global coordinates.
+
+Ego-motion compensation for tracking is also NOT connected yet.
+Keep the ego vehicle stationary during this test.
 """
 
+import math
 import time
 
 import numpy as np
@@ -43,25 +47,39 @@ import numpy as np
 from lidar_receiver import LidarReceiver
 from object_detection.object_detector import ObjectDetector
 from object_detection.tracker import ObjectTracker
+from obstacle_adapter import tracked_list_to_planner_obstacles
+
+
+# ============================================================
+# TEMPORARY EGO POSE
+# ============================================================
+#
+# These values are used ONLY to verify that the real #3 Track
+# object can pass through obstacle_adapter.py.
+#
+# Real GPS / IMU will replace these values in the next stage.
+#
+
+TEST_EGO_X = 100.0
+TEST_EGO_Y = 200.0
+TEST_EGO_YAW = math.radians(0.0)
 
 
 def convert_lidar_to_vehicle(points):
     """
-    Convert #1 LiDAR coordinate system to the coordinate system
-    used by #2 ObjectDetector and #3 ObjectTracker.
+    Convert #1 LiDAR coordinates to #2/#3 vehicle coordinates.
 
-    Input:
-        points[:, 0] = LiDAR X = Right
-        points[:, 1] = LiDAR Y = Forward
-        points[:, 2] = LiDAR Z = Up
-        points[:, 3] = Intensity
+    #1 LiDAR:
+        +X = Right
+        +Y = Forward
+        +Z = Up
 
-    Output:
-        converted[:, 0] = Forward
-        converted[:, 1] = Left
-        converted[:, 2] = Up
+    #2 / #3:
+        +X = Forward
+        +Y = Left
+        +Z = Up
 
-    Coordinate conversion:
+    Conversion:
         vehicle_x = lidar_y
         vehicle_y = -lidar_x
         vehicle_z = lidar_z
@@ -70,31 +88,31 @@ def convert_lidar_to_vehicle(points):
     if points is None or len(points) == 0:
         return np.empty((0, 3), dtype=np.float32)
 
-    return np.column_stack(
+    converted = np.column_stack(
         (
             points[:, 1],
             -points[:, 0],
             points[:, 2],
         )
-    ).astype(np.float32)
+    )
+
+    return converted.astype(np.float32)
 
 
 def print_cluster_diagnostics(non_ground_points, labels):
     """
-    Print diagnostic information for every DBSCAN cluster.
-
-    This is useful while tuning:
-        - min_cluster_points
-        - min_width
-        - min_length
-        - DBSCAN eps / min_samples
+    Print DBSCAN cluster information.
     """
 
     if len(non_ground_points) == 0 or len(labels) == 0:
         return
 
     cluster_ids = sorted(set(labels))
-    cluster_ids = [cluster_id for cluster_id in cluster_ids if cluster_id != -1]
+    cluster_ids = [
+        cluster_id
+        for cluster_id in cluster_ids
+        if cluster_id != -1
+    ]
 
     noise_count = int(np.sum(labels == -1))
 
@@ -104,7 +122,10 @@ def print_cluster_diagnostics(non_ground_points, labels):
     )
 
     for cluster_id in cluster_ids:
-        cluster_points = non_ground_points[labels == cluster_id]
+
+        cluster_points = non_ground_points[
+            labels == cluster_id
+        ]
 
         if len(cluster_points) == 0:
             continue
@@ -125,7 +146,9 @@ def print_cluster_diagnostics(non_ground_points, labels):
         width = y_max - y_min
         height = z_max - z_min
 
-        distance = float(np.hypot(center_x, center_y))
+        distance = float(
+            np.hypot(center_x, center_y)
+        )
 
         print(
             f"  Cluster {cluster_id}: "
@@ -143,36 +166,39 @@ def print_cluster_diagnostics(non_ground_points, labels):
 def main():
 
     print("============================================================")
-    print(" LiDAR 1 -> 2 -> 3 Integration Pipeline")
+    print(" LiDAR 1 -> 2 -> 3 -> Adapter Integration")
     print("============================================================")
     print()
+
     print("[#1] MORAI VLP16 UDP Receiver / Preprocess")
     print("[#2] Ground Removal + DBSCAN Object Detection")
     print("[#3] Object Tracking")
+    print("[ADAPTER] Vehicle obstacle -> Planner obstacle")
+    print()
+
+    print("[TEST EGO POSE]")
+    print(
+        f"x={TEST_EGO_X:.2f}, "
+        f"y={TEST_EGO_Y:.2f}, "
+        f"yaw={math.degrees(TEST_EGO_YAW):.1f} deg"
+    )
+
     print()
     print("[WARNING]")
-    print("Ego-motion compensation is NOT connected yet.")
-    print("Dynamic classification is reliable only while ego is stationary.")
+    print("GPS / IMU are NOT connected yet.")
+    print("Adapter global coordinates are TEST coordinates.")
+    print("Keep the ego vehicle stationary.")
     print()
 
     # ---------------------------------------------------------
-    # #1 LiDAR receiver
+    # #1 LiDAR Receiver
     # ---------------------------------------------------------
 
     receiver = LidarReceiver()
 
     # ---------------------------------------------------------
-    # #2 Object detector
+    # #2 Object Detector
     # ---------------------------------------------------------
-    #
-    # These are the latest values used during the previous
-    # real MORAI integration test.
-    #
-    # NOTE:
-    # min_cluster_points=20 can reject distant obstacles because
-    # a far object may contain only a small number of LiDAR points.
-    # Do NOT lower it yet until false-positive tests are performed.
-    #
 
     detector = ObjectDetector(
         ground_z_threshold=0.08,
@@ -186,7 +212,7 @@ def main():
     )
 
     # ---------------------------------------------------------
-    # #3 Object tracker
+    # #3 Object Tracker
     # ---------------------------------------------------------
 
     tracker = ObjectTracker(
@@ -202,6 +228,7 @@ def main():
     scan_number = 0
 
     try:
+
         receiver.start()
 
         print("[READY] LiDAR receiver started.")
@@ -223,7 +250,7 @@ def main():
                 continue
 
             # -------------------------------------------------
-            # Ignore stale LiDAR data.
+            # Reject stale LiDAR data
             # -------------------------------------------------
 
             if not stats.get("fresh", False):
@@ -237,7 +264,7 @@ def main():
                 continue
 
             # -------------------------------------------------
-            # Do not process the same LiDAR scan repeatedly.
+            # Prevent duplicate processing
             # -------------------------------------------------
 
             if scan_timestamp == last_processed_timestamp:
@@ -248,13 +275,18 @@ def main():
             scan_number += 1
 
             # -------------------------------------------------
-            # Calculate dt for tracker.
+            # Tracker dt
             # -------------------------------------------------
 
             if previous_scan_timestamp is None:
                 dt = 0.1
+
             else:
-                dt = scan_timestamp - previous_scan_timestamp
+
+                dt = (
+                    scan_timestamp
+                    - previous_scan_timestamp
+                )
 
                 if dt <= 0.0 or dt > 1.0:
                     dt = 0.1
@@ -262,38 +294,29 @@ def main():
             previous_scan_timestamp = scan_timestamp
 
             # -------------------------------------------------
-            # Coordinate conversion
-            #
-            # #1:
-            #   X = Right
-            #   Y = Forward
-            #
-            # #2/#3:
-            #   X = Forward
-            #   Y = Left
+            # #1 -> #2 coordinate conversion
             # -------------------------------------------------
 
-            vehicle_points = convert_lidar_to_vehicle(points)
+            vehicle_points = convert_lidar_to_vehicle(
+                points
+            )
 
             # -------------------------------------------------
             # #2 Object Detection
             # -------------------------------------------------
 
-            obstacles, non_ground_points, labels = detector.detect(
+            (
+                obstacles,
+                non_ground_points,
+                labels,
+            ) = detector.detect(
                 vehicle_points
             )
 
             # -------------------------------------------------
             # #3 Object Tracking
             #
-            # Ego-motion compensation is currently OFF.
-            #
-            # This means:
-            #     delta_x   = 0
-            #     delta_y   = 0
-            #     delta_yaw = 0
-            #
-            # We will connect GPS / IMU later.
+            # Ego-motion compensation is still OFF.
             # -------------------------------------------------
 
             tracked_obstacles = tracker.update(
@@ -305,13 +328,36 @@ def main():
             )
 
             # -------------------------------------------------
+            # #3 -> Adapter
+            #
+            # Real Track objects are passed to the adapter.
+            #
+            # GPS / IMU are intentionally replaced with a
+            # fixed test pose at this stage.
+            # -------------------------------------------------
+
+            planner_obstacles = (
+                tracked_list_to_planner_obstacles(
+                    tracked_obstacles,
+                    ego_x=TEST_EGO_X,
+                    ego_y=TEST_EGO_Y,
+                    ego_yaw=TEST_EGO_YAW,
+                    confidence=1.0,
+                )
+            )
+
+            # -------------------------------------------------
             # Diagnostics
             # -------------------------------------------------
 
             print()
-            print("============================================================")
+            print(
+                "============================================================"
+            )
             print(f"SCAN {scan_number}")
-            print("============================================================")
+            print(
+                "============================================================"
+            )
 
             print(
                 f"[INPUT] points={len(vehicle_points)}, "
@@ -325,7 +371,14 @@ def main():
                 labels,
             )
 
-            print(f"[TRACK] objects={len(tracked_obstacles)}")
+            # -------------------------------------------------
+            # #3 output
+            # -------------------------------------------------
+
+            print(
+                f"[TRACK] objects="
+                f"{len(tracked_obstacles)}"
+            )
 
             if len(tracked_obstacles) == 0:
                 print("  No tracked obstacle")
@@ -347,10 +400,34 @@ def main():
                     f"dist={obstacle.distance:.2f} m, "
                     f"width={obstacle.width:.2f} m, "
                     f"length={obstacle.length:.2f} m, "
-                    f"vx={obstacle.velocity_x:.2f} m/s, "
-                    f"vy={obstacle.velocity_y:.2f} m/s, "
                     f"speed={speed:.2f} m/s, "
                     f"dynamic={obstacle.is_dynamic}"
+                )
+
+            # -------------------------------------------------
+            # Adapter output
+            # -------------------------------------------------
+
+            print(
+                f"[ADAPTER] planner_objects="
+                f"{len(planner_obstacles)}"
+            )
+
+            if len(planner_obstacles) == 0:
+                print("  No planner obstacle")
+
+            for obstacle in planner_obstacles:
+
+                print(
+                    f"  PlannerObstacle "
+                    f"id={obstacle.id}: "
+                    f"global_x={obstacle.x:.2f}, "
+                    f"global_y={obstacle.y:.2f}, "
+                    f"width={obstacle.width:.2f}, "
+                    f"length={obstacle.length:.2f}, "
+                    f"distance={obstacle.distance:.2f}, "
+                    f"dynamic={obstacle.is_dynamic}, "
+                    f"confidence={obstacle.confidence:.2f}"
                 )
 
     except KeyboardInterrupt:
