@@ -1,13 +1,13 @@
-import numpy as np
+﻿import numpy as np
 from sklearn.cluster import DBSCAN
 
-from obstacle import Obstacle
+from .obstacle import Obstacle
 
 
 class ObjectDetector:
     """
-    전처리된 LiDAR Point Cloud를 입력받아
-    장애물 목록 Obstacle[]을 생성한다.
+    ?꾩쿂由щ맂 LiDAR Point Cloud瑜??낅젰諛쏆븘
+    ?μ븷臾?紐⑸줉 Obstacle[]???앹꽦?쒕떎.
     """
 
     def __init__(
@@ -63,7 +63,7 @@ class ObjectDetector:
         if len(points) == 0:
             return np.array([], dtype=int)
 
-        # 현재는 X, Y 평면에서 Clustering
+        # ?꾩옱??X, Y ?됰㈃?먯꽌 Clustering
         xy_points = points[:, :2]
 
         dbscan = DBSCAN(
@@ -79,7 +79,7 @@ class ObjectDetector:
 
 
     # ========================================================
-    # Cluster 하나를 Obstacle로 변환
+    # Cluster ?섎굹瑜?Obstacle濡?蹂??
     # ========================================================
 
     def create_obstacle(
@@ -91,7 +91,7 @@ class ObjectDetector:
         point_count = len(cluster_points)
 
         # ----------------------------------------------------
-        # Point 개수 Filtering
+        # Point 媛쒖닔 Filtering
         # ----------------------------------------------------
 
         if point_count < self.min_cluster_points:
@@ -139,7 +139,7 @@ class ObjectDetector:
 
 
         # ----------------------------------------------------
-        # 객체 중심
+        # 媛앹껜 以묒떖
         # ----------------------------------------------------
 
         center_x = (x_min + x_max) / 2.0
@@ -147,7 +147,7 @@ class ObjectDetector:
 
 
         # ----------------------------------------------------
-        # 차량 원점으로부터 거리
+        # 李⑤웾 ?먯젏?쇰줈遺??嫄곕━
         # ----------------------------------------------------
 
         distance = np.sqrt(
@@ -158,7 +158,7 @@ class ObjectDetector:
 
 
         # ----------------------------------------------------
-        # Obstacle 생성
+        # Obstacle ?앹꽦
         # ----------------------------------------------------
 
         obstacle = Obstacle(
@@ -172,12 +172,12 @@ class ObjectDetector:
 
             distance=distance,
 
-            # Tracking에서 이후 갱신
+            # Tracking?먯꽌 ?댄썑 媛깆떊
             velocity_x=0.0,
             velocity_y=0.0,
             is_dynamic=False,
 
-            # 아직 confidence 정의 안 함
+            # ?꾩쭅 confidence ?뺤쓽 ????
             confidence=0.0
         )
 
@@ -185,17 +185,17 @@ class ObjectDetector:
 
 
     # ========================================================
-    # 전체 객체 검출
+    # ?꾩껜 媛앹껜 寃異?
     # ========================================================
 
     def detect(self, points):
 
-        # 1. Ground 제거
+        # 1. Ground ?쒓굅
         non_ground_points = self.remove_ground(
             points
         )
 
-        # Point가 하나도 없으면 빈 결과 반환
+        # Point媛 ?섎굹???놁쑝硫?鍮?寃곌낵 諛섑솚
         if len(non_ground_points) == 0:
 
             return [], non_ground_points, np.array([], dtype=int)
@@ -207,14 +207,14 @@ class ObjectDetector:
         )
 
 
-        # 3. Cluster ID 추출
+        # 3. Cluster ID 異붿텧
         cluster_ids = set(labels)
 
-        # -1은 DBSCAN Noise
+        # -1? DBSCAN Noise
         cluster_ids.discard(-1)
 
 
-        # 4. 최종 Obstacle[]
+        # 4. 理쒖쥌 Obstacle[]
         obstacles = []
 
 
@@ -230,7 +230,7 @@ class ObjectDetector:
             )
 
 
-            # Filtering을 통과한 경우에만 추가
+            # Filtering???듦낵??寃쎌슦?먮쭔 異붽?
             if obstacle is not None:
 
                 obstacles.append(
