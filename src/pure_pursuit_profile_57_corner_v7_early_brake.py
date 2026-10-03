@@ -336,7 +336,8 @@ base.calculate_pure_pursuit = calculate_pure_pursuit_v5
 if __name__ == "__main__":
     print("[STAGE] 57 km/h CORNER V7 - EARLY BRAKING PREVIEW")
     print("[BASE] V5 lateral control unchanged")
-    print(f"[BRAKING] preview decel assumption: 2.0 -> {TIGHT_CURVE_PREVIEW_DECEL_MPS2:.1f} m/s^2")\n    print(f"[LATERAL] signed-curvature preview {PREVIEW_DISTANCE_M:.1f} m unchanged")
+    print(f"[BRAKING] preview decel assumption: 2.0 -> {TIGHT_CURVE_PREVIEW_DECEL_MPS2:.1f} m/s^2")
+    print(f"[LATERAL] signed-curvature preview {PREVIEW_DISTANCE_M:.1f} m unchanged")
     print(f"[SWITCH] target transition advance within {SWITCH_ADVANCE_M:.1f} m")
     print("[LOG] curve sign/switch/original+selected PP target diagnostics enabled")
     profile_test.main()
