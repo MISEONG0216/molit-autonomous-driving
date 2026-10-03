@@ -331,7 +331,7 @@ def main():
     # ========================================================
 
     detector = ObjectDetector(
-        ground_z_threshold=0.08,
+        ground_z_threshold=-1.70,
         dbscan_eps=0.5,
         dbscan_min_samples=5,
         min_cluster_points=20,
