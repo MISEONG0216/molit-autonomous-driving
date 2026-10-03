@@ -388,14 +388,14 @@ def main():
 
             # ------------------------------------------------
             # Multi-intersection GPS traffic-light stop logic
-            # Verified stop indices:
-            # 414, 630, 879, 1114, 1234
+            # Adjusted stop indices:
+            # 414, 620, 879, 1104, 1224
             #
             # Camera -> STOP / GO / GO_LEFT / UNKNOWN
             # GPS    -> exact stopping position
 
             if args.traffic_light:
-                STOP_INDICES = [414, 630, 879, 1114, 1234]
+                STOP_INDICES = [414, 620, 879, 1104, 1224]
 
                 SLOWDOWN_OFFSET = 20
                 MISSION_START_OFFSET = 25
