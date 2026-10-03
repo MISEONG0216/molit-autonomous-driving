@@ -309,12 +309,12 @@ def open_run_log_v6(max_speed_kmh, drive_mode):
         "preview_distance_m", "switch_advance_m",
     ])
     log_file.flush()
-    return log_path, log_file, V5DiagnosticWriter(raw)
+    return log_path, log_file, V6DiagnosticWriter(raw)
 
 
 profile_test.build_test_profile = build_v5_profile_capture
 profile_test.open_run_log = open_run_log_v6
-base.calculate_pure_pursuit = calculate_pure_pursuit_v5
+base.calculate_pure_pursuit = calculate_pure_pursuit_v6
 
 
 if __name__ == "__main__":
