@@ -313,7 +313,7 @@ def open_run_log_v6(max_speed_kmh, drive_mode):
 
 
 profile_test.build_test_profile = build_v5_profile_capture
-profile_test.open_run_log = open_run_log_v5
+profile_test.open_run_log = open_run_log_v6
 base.calculate_pure_pursuit = calculate_pure_pursuit_v5
 
 
