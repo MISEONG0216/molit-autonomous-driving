@@ -496,6 +496,25 @@ def main():
                 f"TRACK/GLOBAL  : {len(tracked_obstacles)} / "
                 f"{len(planner_obstacles)} objects"
             )
+
+            print("[DETECTED OBJECTS]")
+            if len(obstacles) == 0:
+                print("  None")
+            else:
+                for obstacle in obstacles:
+                    obstacle_id = getattr(
+                        obstacle,
+                        "cluster_id",
+                        getattr(obstacle, "id", None),
+                    )
+                    print(
+                        f"  ID={obstacle_id} "
+                        f"x={obstacle.x:.2f} m, "
+                        f"y={obstacle.y:.2f} m, "
+                        f"width={obstacle.width:.2f} m, "
+                        f"length={obstacle.length:.2f} m, "
+                        f"distance={obstacle.distance:.2f} m"
+                    )
             print()
             print(f"PLANNER RAW   : {raw_plan_result.status}")
             print(f"PLANNER       : {plan_result.status}")
