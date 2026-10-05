@@ -112,6 +112,19 @@ class StaticObstaclePlanner:
             idx = nearest_index(self.path, obs.x, obs.y)
             if idx not in order:
                 continue
+
+            # Keep detecting/tracking static objects out to detect_ahead_m, but
+            # only let #4 switch to an avoidance path once the obstacle is close
+            # enough. This prevents an obstacle detected far ahead from causing
+            # an unnecessarily early lateral departure from the global path.
+            avoid_trigger_distance = float(
+                self.cfg.get("avoid_trigger_distance_m", self.cfg["detect_ahead_m"])
+            )
+            obs_forward_distance = float(
+                np.linalg.norm(self.path[idx, :2] - self.path[ego_index, :2])
+            )
+            if obs_forward_distance > avoid_trigger_distance:
+                continue
             d = signed_lateral(self.path, idx, obs.x, obs.y)
             if abs(d) > half_width + obs.width / 2.0:
                 continue
