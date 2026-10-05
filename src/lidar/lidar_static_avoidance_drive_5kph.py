@@ -72,6 +72,7 @@ CONTROL_PORT = 9093
 # detector/planner flicker from switching LOCAL -> GLOBAL -> LOCAL mid-manoeuvre.
 AVOIDANCE_RELEASE_TOLERANCE_M = 0.15
 AVOIDANCE_RELEASE_BUFFER_POINTS = 3
+CLEAR_RELEASE_SCAN_COUNT = 10
 
 
 class AvoidancePathLatch:
@@ -82,6 +83,7 @@ class AvoidancePathLatch:
         self.obstacle_id = None
         self.side = None
         self.release_index = None
+        self.clear_count = 0
 
     def _calculate_release_index(self, local_path):
         local_xy = prepare_path(local_path)
@@ -112,6 +114,15 @@ class AvoidancePathLatch:
         self.obstacle_id = plan_result.obstacle_id
         self.side = plan_result.avoidance_side
         self.release_index = self._calculate_release_index(self.path)
+        self.clear_count = 0
+
+    def _reset(self):
+        self.active = False
+        self.path = None
+        self.obstacle_id = None
+        self.side = None
+        self.release_index = None
+        self.clear_count = 0
 
     def apply(self, raw_plan_result, ego_x, ego_y):
         if not self.active:
@@ -122,17 +133,32 @@ class AvoidancePathLatch:
         local_xy = prepare_path(self.path)
         nearest = pp_base.find_nearest_waypoint(local_xy, ego_x, ego_y)
 
-        if nearest >= self.release_index:
-            self.active = False
-            self.path = None
-            self.obstacle_id = None
-            self.side = None
-            self.release_index = None
-            return raw_plan_result, "RELEASED"
+        # Safety has priority over latch persistence.
+        # A fresh STOP_REQUIRED result must never be hidden by an old
+        # avoidance path.
+        if raw_plan_result.status == "STOP_REQUIRED":
+            self._reset()
+            return raw_plan_result, "STOP_REQUIRED_OVERRIDE"
 
-        # While latched, ignore transient CLEAR/AVOIDING/STOP_REQUIRED results
-        # caused by the same obstacle being intermittently re-detected.  The
-        # accepted collision-free path is fixed in global coordinates.
+        # During an active avoidance manoeuvre, require CLEAR to be observed
+        # for 10 consecutive processed LiDAR scans before returning to the
+        # global path.  Any new AVOIDING result resets the CLEAR counter.
+        if raw_plan_result.status == "CLEAR":
+            self.clear_count += 1
+        else:
+            self.clear_count = 0
+
+        if self.clear_count >= CLEAR_RELEASE_SCAN_COUNT:
+            self._reset()
+            return raw_plan_result, "RELEASED_BY_CLEAR"
+
+        # Keep the original geometric release as a second normal completion
+        # condition.  This preserves the behaviour already validated in the
+        # single-box MORAI test.
+        if nearest >= self.release_index:
+            self._reset()
+            return raw_plan_result, "RELEASED_BY_PATH"
+
         from static_obstacle_planner import PlanResult
         latched = PlanResult(
             "AVOIDING",
@@ -140,7 +166,7 @@ class AvoidancePathLatch:
             self.obstacle_id,
             self.side,
             8.0,
-            "Latched avoidance path held until return-to-global is complete",
+            "Latched avoidance path held until 10 consecutive CLEAR scans or path release",
         )
         return latched, f"LATCHED {nearest}/{self.release_index}"
 
@@ -474,6 +500,10 @@ def main():
             print(f"PLANNER RAW   : {raw_plan_result.status}")
             print(f"PLANNER       : {plan_result.status}")
             print(f"PATH LATCH    : {latch_state}")
+            print(
+                f"CLEAR COUNT   : {avoidance_latch.clear_count} / "
+                f"{CLEAR_RELEASE_SCAN_COUNT}"
+            )
             print(f"OBSTACLE ID   : {plan_result.obstacle_id}")
             print(f"AVOID SIDE    : {plan_result.avoidance_side}")
             print(f"PATH SOURCE   : {path_source}")
