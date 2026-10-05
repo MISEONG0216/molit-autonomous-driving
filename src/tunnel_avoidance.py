@@ -6,7 +6,7 @@ import numpy as np
 
 
 # ============================================================
-# Competition tunnel section
+# Tunnel section
 # ============================================================
 
 TUNNEL_START_INDEX = 3768
@@ -24,14 +24,10 @@ TUNNEL_END = (
 
 
 # ============================================================
-# LiDAR / vehicle configuration
+# Vehicle / safety
 # ============================================================
 
-LIDAR_HEIGHT_M = 1.30
-
-# 실제 차량 폭 확인 후 조정 가능
 VEHICLE_HALF_WIDTH_M = 0.90
-
 SAFETY_MARGIN_M = 0.35
 
 COLLISION_RADIUS_M = (
@@ -39,17 +35,14 @@ COLLISION_RADIUS_M = (
     + SAFETY_MARGIN_M
 )
 
+PREFERRED_CLEARANCE_M = 1.50
+
 
 # ============================================================
-# Tunnel avoidance parameters
+# Avoidance settings
 # ============================================================
 
-# 차선 침범 허용.
-# 터널 벽은 LiDAR collision 검사로 제한한다.
 CANDIDATE_OFFSETS_M = (
-    0.0,
-    1.0,
-    -1.0,
     2.0,
     -2.0,
     3.0,
@@ -58,22 +51,41 @@ CANDIDATE_OFFSETS_M = (
 
 DETECT_FORWARD_M = 22.0
 
-# 원래 경로 바로 앞에 장애물이 있는지 판단
-CENTER_CORRIDOR_HALF_WIDTH_M = 1.15
+CENTER_CORRIDOR_HALF_WIDTH_M = 1.60
 
-MIN_OBSTACLE_POINTS = 5
+MIN_OBSTACLE_POINTS = 3
 
-# 회피 시작 후 다시 원래 경로로 돌아올 거리
 DEFAULT_AVOID_HORIZON_M = 35.0
 
-# 터널 주행 속도 제한
+
+# ============================================================
+# Speed limits
+# ============================================================
+
 TUNNEL_SPEED_CAP_KMH = 25.0
 
-# 장애물 회피 중
-AVOID_SPEED_CAP_KMH = 15.0
+AVOID_SPEED_CAP_KMH = 3.0
 
-# 모든 후보가 좋지 않아도 정지하지 않고 계속 움직인다.
-FALLBACK_CRAWL_KMH = 6.0
+TIGHT_AVOID_SPEED_CAP_KMH = 2.0
+
+FALLBACK_CRAWL_KMH = 1.5
+
+
+# ============================================================
+# Ground estimation
+# ============================================================
+
+GROUND_FORWARD_MIN_M = 2.0
+GROUND_FORWARD_MAX_M = 15.0
+
+GROUND_SIDE_HALF_WIDTH_M = 3.0
+
+GROUND_PERCENTILE = 10.0
+
+GROUND_FALLBACK_Z_M = -1.86
+
+MIN_OBSTACLE_HEIGHT_M = 0.15
+MAX_OBSTACLE_HEIGHT_M = 2.50
 
 
 # ============================================================
@@ -84,7 +96,10 @@ def smoothstep(t):
 
     t = max(
         0.0,
-        min(1.0, float(t))
+        min(
+            1.0,
+            float(t),
+        ),
     )
 
     return (
@@ -94,49 +109,220 @@ def smoothstep(t):
     )
 
 
-def path_distance(path):
-
-    if len(path) <= 1:
-        return np.zeros(len(path))
-
-    diff = np.diff(
-        path[:, :2],
-        axis=0
-    )
-
-    ds = np.hypot(
-        diff[:, 0],
-        diff[:, 1]
-    )
-
-    return np.concatenate(
-        (
-            [0.0],
-            np.cumsum(ds),
-        )
-    )
-
-
 def global_to_vehicle(
     path,
     vehicle_x,
     vehicle_y,
-    yaw
+    yaw,
 ):
 
-    dx = path[:, 0] - vehicle_x
-    dy = path[:, 1] - vehicle_y
+    path = np.asarray(
+        path,
+        dtype=float,
+    )
+
+    dx = (
+        path[:, 0]
+        - vehicle_x
+    )
+
+    dy = (
+        path[:, 1]
+        - vehicle_y
+    )
 
     c = math.cos(yaw)
     s = math.sin(yaw)
 
-    forward = c * dx + s * dy
-    left = -s * dx + c * dy
+    forward = (
+        c * dx
+        + s * dy
+    )
+
+    left = (
+        -s * dx
+        + c * dy
+    )
 
     return np.column_stack(
         (
             forward,
             left,
+        )
+    )
+
+
+# ============================================================
+# Ground estimation
+# ============================================================
+
+def estimate_ground_z(
+    lidar_points,
+):
+
+    if (
+        lidar_points is None
+        or len(lidar_points) == 0
+    ):
+
+        return (
+            GROUND_FALLBACK_Z_M
+        )
+
+    p = np.asarray(
+        lidar_points,
+        dtype=float,
+    )
+
+    forward = p[:, 0]
+    left = p[:, 1]
+    sensor_z = p[:, 2]
+
+    mask = (
+        (forward > GROUND_FORWARD_MIN_M)
+        & (forward < GROUND_FORWARD_MAX_M)
+        & (
+            np.abs(left)
+            < GROUND_SIDE_HALF_WIDTH_M
+        )
+    )
+
+    samples = (
+        sensor_z[
+            mask
+        ]
+    )
+
+    if len(samples) < 20:
+
+        return (
+            GROUND_FALLBACK_Z_M
+        )
+
+    return float(
+        np.percentile(
+            samples,
+            GROUND_PERCENTILE,
+        )
+    )
+
+
+# ============================================================
+# LiDAR obstacle filtering
+# ============================================================
+
+def filter_obstacle_points(
+    lidar_points,
+):
+
+    if lidar_points is None:
+
+        return np.empty(
+            (0, 2),
+            dtype=float,
+        )
+
+    if len(lidar_points) == 0:
+
+        return np.empty(
+            (0, 2),
+            dtype=float,
+        )
+
+    p = np.asarray(
+        lidar_points,
+        dtype=float,
+    )
+
+    forward = p[:, 0]
+    left = p[:, 1]
+    sensor_z = p[:, 2]
+
+    ground_z = (
+        estimate_ground_z(
+            p
+        )
+    )
+
+    height = (
+        sensor_z
+        - ground_z
+    )
+
+    mask = (
+        (forward > 1.0)
+        & (forward < 40.0)
+        & (np.abs(left) < 7.0)
+        & (
+            height
+            > MIN_OBSTACLE_HEIGHT_M
+        )
+        & (
+            height
+            < MAX_OBSTACLE_HEIGHT_M
+        )
+    )
+
+    return np.column_stack(
+        (
+            forward[mask],
+            left[mask],
+        )
+    )
+
+
+# ============================================================
+# Front obstacle detector
+# ============================================================
+
+def front_obstacle_distance(
+    obstacle_points,
+):
+
+    if (
+        obstacle_points is None
+        or len(obstacle_points) == 0
+    ):
+
+        return None
+
+    p = np.asarray(
+        obstacle_points,
+        dtype=float,
+    )
+
+    forward = p[:, 0]
+    left = p[:, 1]
+
+    mask = (
+        (forward > 2.0)
+        & (
+            forward
+            < DETECT_FORWARD_M
+        )
+        & (
+            np.abs(left)
+            < CENTER_CORRIDOR_HALF_WIDTH_M
+        )
+    )
+
+    candidate = (
+        forward[
+            mask
+        ]
+    )
+
+    if (
+        len(candidate)
+        < MIN_OBSTACLE_POINTS
+    ):
+
+        return None
+
+    return float(
+        np.percentile(
+            candidate,
+            10,
         )
     )
 
@@ -152,25 +338,21 @@ def build_avoidance_path(
     obstacle_distance_m,
 ):
 
-    """
-    global_path의 일부를 복사한 후,
-    좌/우 lateral offset을 주어 S자 회피경로 생성.
-
-    시작 offset = 0
-    장애물 부근 = peak_offset
-    마지막 offset = 0
-
-    따라서 최종적으로 원래 global_path로 자동 복귀.
-    """
+    global_path = np.asarray(
+        global_path,
+        dtype=float,
+    )
 
     points = []
 
     total_distance = 0.0
 
-    previous = global_path[
-        start_index,
-        :2
-    ]
+    previous = (
+        global_path[
+            start_index,
+            :2
+        ]
+    )
 
     end_index = start_index
 
@@ -181,16 +363,23 @@ def build_avoidance_path(
 
     for i in range(
         start_index,
-        len(global_path)
+        len(global_path),
     ):
 
-        p = global_path[i, :2]
+        p = (
+            global_path[
+                i,
+                :2
+            ]
+        )
 
         if i > start_index:
 
-            total_distance += math.hypot(
-                p[0] - previous[0],
-                p[1] - previous[1],
+            total_distance += (
+                math.hypot(
+                    p[0] - previous[0],
+                    p[1] - previous[1],
+                )
             )
 
         points.append(
@@ -206,45 +395,50 @@ def build_avoidance_path(
 
         end_index = i
 
-        if total_distance >= horizon:
+        if (
+            total_distance
+            >= horizon
+        ):
             break
 
     if len(points) < 3:
 
         return (
             None,
-            start_index
+            start_index,
         )
 
     temp = np.zeros(
-        (len(points), 2),
-        dtype=float
+        (
+            len(points),
+            2,
+        ),
+        dtype=float,
     )
 
-    # 최대 회피 위치를 장애물보다 약간 뒤로
+    # 최대 lateral offset에 장애물보다 먼저 도달
     peak_distance = max(
-        7.0,
-        obstacle_distance_m + 2.0
+        3.0,
+        obstacle_distance_m - 1.5,
     )
 
-    # 충분히 회피 후 복귀하도록 함
+    # 장애물을 지난 뒤 부드럽게 원래 global path 복귀
     end_distance = max(
-        peak_distance + 12.0,
-        total_distance
+        peak_distance + 14.0,
+        total_distance,
     )
 
     for j, (
         x,
         y,
         global_idx,
-        distance_m
+        distance_m,
     ) in enumerate(points):
 
-        # --------------------------------
-        # lateral offset profile
-        # --------------------------------
-
-        if distance_m <= peak_distance:
+        if (
+            distance_m
+            <= peak_distance
+        ):
 
             t = (
                 distance_m
@@ -261,7 +455,7 @@ def build_avoidance_path(
             recover_length = max(
                 1.0,
                 end_distance
-                - peak_distance
+                - peak_distance,
             )
 
             t = (
@@ -277,52 +471,72 @@ def build_avoidance_path(
                 )
             )
 
-        # --------------------------------
-        # global path tangent
-        # --------------------------------
-
         if global_idx <= 0:
 
-            p0 = global_path[
-                global_idx,
-                :2
-            ]
+            p0 = (
+                global_path[
+                    global_idx,
+                    :2
+                ]
+            )
 
-            p1 = global_path[
-                global_idx + 1,
-                :2
-            ]
+            p1 = (
+                global_path[
+                    global_idx + 1,
+                    :2
+                ]
+            )
 
-        elif global_idx >= len(global_path) - 1:
+        elif (
+            global_idx
+            >= len(global_path) - 1
+        ):
 
-            p0 = global_path[
-                global_idx - 1,
-                :2
-            ]
+            p0 = (
+                global_path[
+                    global_idx - 1,
+                    :2
+                ]
+            )
 
-            p1 = global_path[
-                global_idx,
-                :2
-            ]
+            p1 = (
+                global_path[
+                    global_idx,
+                    :2
+                ]
+            )
 
         else:
 
-            p0 = global_path[
-                global_idx - 1,
-                :2
-            ]
+            p0 = (
+                global_path[
+                    global_idx - 1,
+                    :2
+                ]
+            )
 
-            p1 = global_path[
-                global_idx + 1,
-                :2
-            ]
+            p1 = (
+                global_path[
+                    global_idx + 1,
+                    :2
+                ]
+            )
 
-        tx = p1[0] - p0[0]
-        ty = p1[1] - p0[1]
+        tx = (
+            p1[0]
+            - p0[0]
+        )
 
-        norm = math.hypot(
-            tx,
-            ty
+        ty = (
+            p1[1]
+            - p0[1]
+        )
+
+        norm = (
+            math.hypot(
+                tx,
+                ty,
+            )
         )
 
         if norm < 1e-6:
@@ -335,136 +549,38 @@ def build_avoidance_path(
             tx /= norm
             ty /= norm
 
-            # 좌측 normal
             nx = -ty
             ny = tx
 
         temp[j, 0] = (
             x
-            + lateral_offset * nx
+            + lateral_offset
+            * nx
         )
 
         temp[j, 1] = (
             y
-            + lateral_offset * ny
+            + lateral_offset
+            * ny
         )
 
-    # 마지막 점은 반드시 global_path에 붙임
-    temp[-1, 0] = points[-1][0]
-    temp[-1, 1] = points[-1][1]
+    # 마지막 점은 반드시 원래 경로
+    temp[-1, 0] = (
+        points[-1][0]
+    )
+
+    temp[-1, 1] = (
+        points[-1][1]
+    )
 
     return (
         temp,
-        end_index
+        end_index,
     )
 
 
 # ============================================================
-# LiDAR point filtering
-# ============================================================
-
-def filter_obstacle_points(
-    lidar_points
-):
-
-    """
-    input:
-        Nx3
-        [forward, left, sensor_z]
-
-    output:
-        실제 회피 판단용 Nx2
-        [forward, left]
-    """
-
-    if lidar_points is None:
-
-        return np.empty(
-            (0, 2),
-            dtype=float
-        )
-
-    if len(lidar_points) == 0:
-
-        return np.empty(
-            (0, 2),
-            dtype=float
-        )
-
-    p = np.asarray(
-        lidar_points,
-        dtype=float
-    )
-
-    forward = p[:, 0]
-    left = p[:, 1]
-
-    sensor_z = p[:, 2]
-
-    # LiDAR 장착높이 1.30m 반영
-    ground_height = (
-        sensor_z
-        + LIDAR_HEIGHT_M
-    )
-
-    mask = (
-        (forward > 1.0)
-        & (forward < 40.0)
-        & (np.abs(left) < 7.0)
-        & (ground_height > 0.15)
-        & (ground_height < 2.50)
-    )
-
-    return np.column_stack(
-        (
-            forward[mask],
-            left[mask],
-        )
-    )
-
-
-# ============================================================
-# Obstacle detection
-# ============================================================
-
-def front_obstacle_distance(
-    obstacle_points
-):
-
-    if len(obstacle_points) == 0:
-        return None
-
-    forward = obstacle_points[:, 0]
-    left = obstacle_points[:, 1]
-
-    mask = (
-        (forward > 2.0)
-        & (forward < DETECT_FORWARD_M)
-        & (
-            np.abs(left)
-            < CENTER_CORRIDOR_HALF_WIDTH_M
-        )
-    )
-
-    candidate = forward[mask]
-
-    if (
-        len(candidate)
-        < MIN_OBSTACLE_POINTS
-    ):
-        return None
-
-    # 한 개의 튀는 점보다 안정적인 값 사용
-    return float(
-        np.percentile(
-            candidate,
-            10
-        )
-    )
-
-
-# ============================================================
-# Candidate path collision score
+# Candidate clearance
 # ============================================================
 
 def path_clearance(
@@ -479,56 +595,71 @@ def path_clearance(
         candidate_path is None
         or len(candidate_path) == 0
     ):
+
         return 0.0
 
-    if len(obstacle_points) == 0:
+    if (
+        obstacle_points is None
+        or len(obstacle_points) == 0
+    ):
 
         return 999.0
 
-    local_path = global_to_vehicle(
-        candidate_path,
-        vehicle_x,
-        vehicle_y,
-        yaw,
+    local_path = (
+        global_to_vehicle(
+            candidate_path,
+            vehicle_x,
+            vehicle_y,
+            yaw,
+        )
     )
 
-    # 뒤쪽 path 제거
     valid_path = (
         (local_path[:, 0] > 1.0)
         & (local_path[:, 0] < 40.0)
     )
 
-    local_path = local_path[
-        valid_path
-    ]
+    local_path = (
+        local_path[
+            valid_path
+        ]
+    )
 
     if len(local_path) == 0:
+
         return 0.0
 
-    points = obstacle_points
+    points = np.asarray(
+        obstacle_points,
+        dtype=float,
+    )
 
-    # 계산량 감소
     if len(points) > 3000:
 
         step = max(
             1,
-            len(points) // 3000
+            len(points) // 3000,
         )
 
-        points = points[::step]
+        points = (
+            points[
+                ::step
+            ]
+        )
 
-    # obstacle x path 거리 계산
     diff = (
         points[:, None, :]
         - local_path[None, :, :]
     )
 
-    dist_sq = np.sum(
-        diff * diff,
-        axis=2
+    dist_sq = (
+        np.sum(
+            diff * diff,
+            axis=2,
+        )
     )
 
-    min_dist = math.sqrt(
+    return math.sqrt(
         float(
             np.min(
                 dist_sq
@@ -536,11 +667,9 @@ def path_clearance(
         )
     )
 
-    return min_dist
-
 
 # ============================================================
-# Planner
+# Tunnel avoidance planner V5
 # ============================================================
 
 class TunnelAvoidancePlanner:
@@ -557,9 +686,17 @@ class TunnelAvoidancePlanner:
 
         self.last_clearance = 999.0
 
+        # V5:
+        # 최초 회피 방향을 저장한다.
+        #
+        # +1 = global path 기준 + offset
+        # -1 = global path 기준 - offset
+        self.locked_sign = None
+
+
     def in_tunnel(
         self,
-        nearest_index
+        nearest_index,
     ):
 
         return (
@@ -568,11 +705,167 @@ class TunnelAvoidancePlanner:
             <= TUNNEL_END_INDEX
         )
 
-    def clear_plan(self):
+
+    def clear_plan(
+        self,
+        reset_side=True,
+    ):
 
         self.active_path = None
+
         self.active_offset = 0.0
+
         self.end_global_index = None
+
+        self.last_clearance = 999.0
+
+        if reset_side:
+
+            self.locked_sign = None
+
+
+    def _candidate_offsets(
+        self,
+        same_side_only=False,
+    ):
+
+        if (
+            not same_side_only
+            or self.locked_sign is None
+        ):
+
+            return list(
+                CANDIDATE_OFFSETS_M
+            )
+
+        sign = (
+            1.0
+            if self.locked_sign > 0
+            else -1.0
+        )
+
+        # V5 핵심:
+        # 한 번 선택한 방향의 반대편 후보는 아예 생성하지 않는다.
+        return [
+            2.0 * sign,
+            3.0 * sign,
+        ]
+
+
+    def _choose_path(
+        self,
+        global_path,
+        nearest_index,
+        vehicle_x,
+        vehicle_y,
+        yaw,
+        obstacle_points,
+        obstacle_distance,
+        candidate_offsets,
+    ):
+
+        candidates = []
+
+        for offset in candidate_offsets:
+
+            path, end_idx = (
+                build_avoidance_path(
+                    global_path,
+                    nearest_index,
+                    offset,
+                    obstacle_distance,
+                )
+            )
+
+            if path is None:
+
+                continue
+
+            clearance = (
+                path_clearance(
+                    path,
+                    obstacle_points,
+                    vehicle_x,
+                    vehicle_y,
+                    yaw,
+                )
+            )
+
+            candidates.append(
+                (
+                    float(offset),
+                    path,
+                    int(end_idx),
+                    float(clearance),
+                )
+            )
+
+        if not candidates:
+
+            return None
+
+        preferred = [
+            c
+            for c in candidates
+            if (
+                c[3]
+                >= PREFERRED_CLEARANCE_M
+            )
+        ]
+
+        if preferred:
+
+            # 가장 작은 회피량을 우선.
+            # 같은 회피량이면 clearance 큰 쪽.
+            preferred.sort(
+                key=lambda c: (
+                    abs(c[0]),
+                    -c[3],
+                )
+            )
+
+            return (
+                preferred[0],
+                "AVOID",
+            )
+
+        minimum_safe = [
+            c
+            for c in candidates
+            if (
+                c[3]
+                >= COLLISION_RADIUS_M
+            )
+        ]
+
+        if minimum_safe:
+
+            chosen = max(
+                minimum_safe,
+                key=lambda c: (
+                    c[3],
+                    -abs(c[0]),
+                ),
+            )
+
+            return (
+                chosen,
+                "AVOID_TIGHT",
+            )
+
+        chosen = max(
+            candidates,
+            key=lambda c: (
+                c[3],
+                -abs(c[0]),
+            ),
+        )
+
+        return (
+            chosen,
+            "AVOID_FALLBACK",
+        )
+
 
     def update(
         self,
@@ -584,9 +877,9 @@ class TunnelAvoidancePlanner:
         lidar_points,
     ):
 
-        # ---------------------------------------
-        # Tunnel 밖
-        # ---------------------------------------
+        # ----------------------------------------------------
+        # Tunnel outside
+        # ----------------------------------------------------
 
         if not self.in_tunnel(
             nearest_index
@@ -594,7 +887,9 @@ class TunnelAvoidancePlanner:
 
             self.state = "NORMAL"
 
-            self.clear_plan()
+            self.clear_plan(
+                reset_side=True
+            )
 
             return {
                 "state": self.state,
@@ -603,6 +898,7 @@ class TunnelAvoidancePlanner:
                 "offset": 0.0,
                 "obstacle_distance": None,
                 "clearance": None,
+                "side_locked": False,
             }
 
         obstacle_points = (
@@ -611,9 +907,15 @@ class TunnelAvoidancePlanner:
             )
         )
 
-        # ---------------------------------------
-        # 이미 회피경로 진행 중
-        # ---------------------------------------
+        obstacle_distance = (
+            front_obstacle_distance(
+                obstacle_points
+            )
+        )
+
+        # ----------------------------------------------------
+        # Existing avoidance path
+        # ----------------------------------------------------
 
         if self.active_path is not None:
 
@@ -624,29 +926,39 @@ class TunnelAvoidancePlanner:
                 < self.end_global_index - 2
             ):
 
-                self.state = "AVOID"
-
-                clearance = path_clearance(
-                    self.active_path,
-                    obstacle_points,
-                    vehicle_x,
-                    vehicle_y,
-                    yaw,
+                clearance = (
+                    path_clearance(
+                        self.active_path,
+                        obstacle_points,
+                        vehicle_x,
+                        vehicle_y,
+                        yaw,
+                    )
                 )
 
-                self.last_clearance = clearance
+                self.last_clearance = (
+                    clearance
+                )
+
+                self.state = "AVOID"
 
                 return {
                     "state": self.state,
                     "path": self.active_path,
                     "speed_cap": AVOID_SPEED_CAP_KMH,
                     "offset": self.active_offset,
-                    "obstacle_distance": None,
+                    "obstacle_distance": obstacle_distance,
                     "clearance": clearance,
+                    "side_locked": (
+                        self.locked_sign
+                        is not None
+                    ),
                 }
 
-            # 회피경로 끝 -> global path 복귀
-            self.clear_plan()
+            # 회피 경로 끝 도달
+            self.clear_plan(
+                reset_side=True
+            )
 
             self.state = "RECOVER"
 
@@ -655,19 +967,14 @@ class TunnelAvoidancePlanner:
                 "path": None,
                 "speed_cap": TUNNEL_SPEED_CAP_KMH,
                 "offset": 0.0,
-                "obstacle_distance": None,
+                "obstacle_distance": obstacle_distance,
                 "clearance": None,
+                "side_locked": False,
             }
 
-        # ---------------------------------------
-        # 새로운 장애물 탐색
-        # ---------------------------------------
-
-        obstacle_distance = (
-            front_obstacle_distance(
-                obstacle_points
-            )
-        )
+        # ----------------------------------------------------
+        # No obstacle
+        # ----------------------------------------------------
 
         if obstacle_distance is None:
 
@@ -680,119 +987,213 @@ class TunnelAvoidancePlanner:
                 "offset": 0.0,
                 "obstacle_distance": None,
                 "clearance": None,
+                "side_locked": False,
             }
 
-        # ---------------------------------------
-        # 후보 회피경로 생성
-        # ---------------------------------------
+        # ----------------------------------------------------
+        # First obstacle detection
+        # ----------------------------------------------------
 
-        candidates = []
-
-        for offset in (
-            CANDIDATE_OFFSETS_M
-        ):
-
-            path, end_idx = (
-                build_avoidance_path(
-                    global_path,
-                    nearest_index,
-                    offset,
-                    obstacle_distance,
-                )
-            )
-
-            clearance = path_clearance(
-                path,
-                obstacle_points,
+        selection = (
+            self._choose_path(
+                global_path,
+                nearest_index,
                 vehicle_x,
                 vehicle_y,
                 yaw,
+                obstacle_points,
+                obstacle_distance,
+                self._candidate_offsets(
+                    same_side_only=False
+                ),
             )
+        )
 
-            candidates.append(
-                (
-                    offset,
-                    path,
-                    end_idx,
-                    clearance,
-                )
-            )
-
-        # ---------------------------------------
-        # 충돌 없는 후보
-        # ---------------------------------------
-
-        safe = [
-            c
-            for c in candidates
-            if c[3]
-            >= COLLISION_RADIUS_M
-        ]
-
-        if safe:
-
-            # 같은 정도의 lateral 이동이면
-            # clearance가 큰 쪽 선택.
-            # 필요 이상으로 반대차선까지 가지 않도록
-            # 작은 offset 우선.
-            safe.sort(
-                key=lambda c: (
-                    abs(c[0]),
-                    -c[3],
-                )
-            )
-
-            chosen = safe[0]
-
-            self.state = "AVOID"
-
-        else:
-
-            # -----------------------------------
-            # 정지하지 않는 fallback
-            # -----------------------------------
-            #
-            # 모든 후보가 막힌 것으로 보일 경우
-            # 가장 clearance가 큰 경로를 선택하고
-            # 매우 느리게 계속 전진.
-            #
-            # 실제 대회에서는 회피 가능한 공간이
-            # 존재한다는 전제.
-            #
-
-            chosen = max(
-                candidates,
-                key=lambda c: c[3]
-            )
+        if selection is None:
 
             self.state = (
                 "AVOID_FALLBACK"
             )
 
+            return {
+                "state": self.state,
+                "path": None,
+                "speed_cap": FALLBACK_CRAWL_KMH,
+                "offset": 0.0,
+                "obstacle_distance": obstacle_distance,
+                "clearance": 0.0,
+                "side_locked": False,
+            }
+
+        chosen, state = selection
+
         (
             offset,
             path,
             end_idx,
-            clearance
+            clearance,
         ) = chosen
 
         self.active_path = path
-        self.active_offset = offset
-        self.end_global_index = end_idx
-        self.last_clearance = clearance
 
-        speed_cap = (
-            FALLBACK_CRAWL_KMH
-            if self.state
-            == "AVOID_FALLBACK"
-            else AVOID_SPEED_CAP_KMH
+        self.active_offset = offset
+
+        self.end_global_index = (
+            end_idx
         )
+
+        self.last_clearance = (
+            clearance
+        )
+
+        # V5 핵심:
+        # 최초 회피 방향 고정
+        self.locked_sign = (
+            1
+            if offset > 0.0
+            else -1
+        )
+
+        self.state = state
+
+        if (
+            state
+            == "AVOID_FALLBACK"
+        ):
+
+            speed_cap = (
+                FALLBACK_CRAWL_KMH
+            )
+
+        elif (
+            state
+            == "AVOID_TIGHT"
+        ):
+
+            speed_cap = (
+                TIGHT_AVOID_SPEED_CAP_KMH
+            )
+
+        else:
+
+            speed_cap = (
+                AVOID_SPEED_CAP_KMH
+            )
 
         return {
             "state": self.state,
             "path": self.active_path,
             "speed_cap": speed_cap,
-            "offset": offset,
+            "offset": self.active_offset,
             "obstacle_distance": obstacle_distance,
             "clearance": clearance,
+            "side_locked": True,
         }
+
+
+    # ========================================================
+    # V5 controlled replan
+    # ========================================================
+
+    def replan_same_side(
+        self,
+        global_path,
+        nearest_index,
+        vehicle_x,
+        vehicle_y,
+        yaw,
+        lidar_points,
+    ):
+
+        if (
+            self.active_path is None
+            or self.locked_sign is None
+        ):
+
+            return False
+
+        obstacle_points = (
+            filter_obstacle_points(
+                lidar_points
+            )
+        )
+
+        obstacle_distance = (
+            front_obstacle_distance(
+                obstacle_points
+            )
+        )
+
+        if obstacle_distance is None:
+
+            return False
+
+        current_abs_offset = (
+            abs(
+                self.active_offset
+            )
+        )
+
+        sign = (
+            1.0
+            if self.locked_sign > 0
+            else -1.0
+        )
+
+        # 이미 3m 회피 중이면 더 이상
+        # 매 프레임 재생성하지 않는다.
+        if current_abs_offset >= 2.9:
+
+            return False
+
+        # V5:
+        # +2 -> +3
+        # -2 -> -3
+        # 반대 방향 후보 없음
+        candidate_offsets = [
+            3.0 * sign
+        ]
+
+        selection = (
+            self._choose_path(
+                global_path,
+                nearest_index,
+                vehicle_x,
+                vehicle_y,
+                yaw,
+                obstacle_points,
+                obstacle_distance,
+                candidate_offsets,
+            )
+        )
+
+        if selection is None:
+
+            return False
+
+        chosen, state = selection
+
+        (
+            offset,
+            path,
+            end_idx,
+            clearance,
+        ) = chosen
+
+        self.active_path = path
+
+        self.active_offset = offset
+
+        self.end_global_index = (
+            end_idx
+        )
+
+        self.last_clearance = (
+            clearance
+        )
+
+        self.state = state
+
+        # locked_sign은 절대 변경하지 않는다.
+
+        return True
