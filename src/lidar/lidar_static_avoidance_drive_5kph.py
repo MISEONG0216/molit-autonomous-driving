@@ -1,0 +1,435 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""5 km/h static-obstacle avoidance DRIVE integration test.
+
+Pipeline:
+GPS/IMU + VLP16 -> detection -> tracking with ego-motion compensation
+-> global obstacle adapter -> StaticObstaclePlanner
+-> path selector -> Pure Pursuit -> longitudinal control -> EgoCtrlCmd.
+
+Safety:
+- Default is DRY-RUN. CtrlCmd is sent only with --drive.
+- Test speed is hard-limited to 5 km/h.
+- CLEAR follows the global-path slice.
+- AVOIDING follows the generated local avoidance path.
+- STOP_REQUIRED commands accel=0 and brake=1.0.
+- Existing validated controller files are not modified.
+"""
+
+import argparse
+import math
+import sys
+import time
+from pathlib import Path
+
+import numpy as np
+
+LIDAR_DIR = Path(__file__).resolve().parent
+SRC_DIR = LIDAR_DIR.parent
+PROJECT_ROOT = SRC_DIR.parent
+
+for path in (SRC_DIR, LIDAR_DIR):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
+
+from morai_common import ensure_morai_import_path, load_network_config
+
+ensure_morai_import_path()
+
+from lib.network.UDP import Receiver, Sender
+from lib.define.GPS import GPS
+from lib.define.IMU import IMU
+from lib.define.EgoCtrlCmd import EgoCtrlCmd
+
+import pure_pursuit_regulation as pp_base
+from pure_pursuit_competition import CompetitionSpeedReceiver
+
+from lidar_receiver import LidarReceiver
+from object_detection.object_detector import ObjectDetector
+from object_detection.tracker import ObjectTracker
+from obstacle_adapter import tracked_list_to_planner_obstacles
+from static_obstacle_planner import StaticObstaclePlanner
+from lidar_ego_motion_test import (
+    read_ego_pose,
+    calculate_ego_motion,
+    convert_lidar_to_vehicle,
+)
+
+
+GLOBAL_PATH_FILE = PROJECT_ROOT / "path" / "2026_molit_comp_global_path.txt"
+STATIC_CONFIG_FILE = LIDAR_DIR / "static_obstacle_config.json"
+
+TEST_SPEED_LIMIT_KPH = 5.0
+LOCAL_PATH_LOOKAHEAD_M = 2.5
+LOCAL_PATH_SEARCH_SIZE = 80
+CONTROL_IP = "127.0.0.1"
+CONTROL_PORT = 9093
+
+
+def prepare_path(path):
+    array = np.asarray(path, dtype=float)
+    if array.ndim != 2 or array.shape[1] < 2:
+        return np.empty((0, 2), dtype=float)
+    return array[:, :2].copy()
+
+
+def calculate_selected_path_pure_pursuit(path, ego_x, ego_y, ego_yaw):
+    selected_path = prepare_path(path)
+    if len(selected_path) < 2:
+        return None, selected_path
+
+    nearest_index = pp_base.find_nearest_waypoint(selected_path, ego_x, ego_y)
+    end_index = min(nearest_index + LOCAL_PATH_SEARCH_SIZE, len(selected_path))
+
+    cos_yaw = math.cos(ego_yaw)
+    sin_yaw = math.sin(ego_yaw)
+
+    for i in range(nearest_index, end_index):
+        dx = selected_path[i, 0] - ego_x
+        dy = selected_path[i, 1] - ego_y
+
+        local_x = cos_yaw * dx + sin_yaw * dy
+        local_y = -sin_yaw * dx + cos_yaw * dy
+
+        if local_x <= 0.0:
+            continue
+
+        if math.hypot(local_x, local_y) < LOCAL_PATH_LOOKAHEAD_M:
+            continue
+
+        theta = math.atan2(local_y, local_x)
+        steering = math.atan2(
+            2.0 * pp_base.VEHICLE_LENGTH * math.sin(theta),
+            LOCAL_PATH_LOOKAHEAD_M,
+        )
+
+        return {
+            "nearest_index": nearest_index,
+            "target_index": i,
+            "local_x": float(local_x),
+            "local_y": float(local_y),
+            "steering": float(steering),
+        }, selected_path
+
+    return None, selected_path
+
+
+def send_control(sender, accel, brake, steering):
+    cmd = EgoCtrlCmd()
+    cmd.ctrl_mode = 2
+    cmd.gear = 4
+    cmd.cmd_type = 1
+    cmd.accel = max(0.0, min(1.0, float(accel)))
+    cmd.brake = max(0.0, min(1.0, float(brake)))
+    cmd.steer = max(-1.0, min(1.0, float(steering)))
+    sender.send(cmd)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--drive",
+        action="store_true",
+        help="실제 MORAI로 EgoCtrlCmd 송신. 생략하면 DRY-RUN.",
+    )
+    args = parser.parse_args()
+
+    print("=" * 76)
+    print(" STATIC OBSTACLE AVOIDANCE + PURE PURSUIT - 5 km/h TEST")
+    print("=" * 76)
+    print("[MODE] DRIVE" if args.drive else "[MODE] DRY-RUN")
+    print("[LIMIT] Hard speed limit = 5.0 km/h")
+    print("[PATH] CLEAR -> GLOBAL / AVOIDING -> LOCAL_AVOIDANCE")
+    print("[STOP] STOP_REQUIRED -> accel 0 / brake 1.0")
+    print(f"[CTRL] {CONTROL_IP}:{CONTROL_PORT} / ctrl_mode=2 / cmd_type=1")
+    print()
+
+    if not GLOBAL_PATH_FILE.exists():
+        raise FileNotFoundError(f"Global path not found: {GLOBAL_PATH_FILE}")
+    if not STATIC_CONFIG_FILE.exists():
+        raise FileNotFoundError(f"Planner config not found: {STATIC_CONFIG_FILE}")
+
+    global_path = np.loadtxt(GLOBAL_PATH_FILE, dtype=float)
+    if global_path.ndim != 2 or global_path.shape[1] < 2:
+        raise RuntimeError("Global path requires x/y columns.")
+    if global_path.shape[1] == 2:
+        global_path = np.column_stack((global_path, np.zeros(len(global_path))))
+    global_path = global_path[:, :3]
+
+    planner = StaticObstaclePlanner(global_path, str(STATIC_CONFIG_FILE))
+
+    network_config = load_network_config()
+    gps_cfg = network_config["gps"]
+    imu_cfg = network_config["imu"]
+
+    gps_receiver = Receiver(gps_cfg["ip"], int(gps_cfg["port"]), GPS())
+    imu_receiver = Receiver(imu_cfg["ip"], int(imu_cfg["port"]), IMU())
+    speed_receiver = CompetitionSpeedReceiver()
+    lidar_receiver = LidarReceiver()
+    ctrl_sender = Sender(CONTROL_IP, CONTROL_PORT) if args.drive else None
+
+    detector = ObjectDetector(
+        ground_z_threshold=-1.70,
+        dbscan_eps=0.5,
+        dbscan_min_samples=5,
+        min_cluster_points=20,
+        min_width=0.15,
+        max_width=3.00,
+        min_length=0.05,
+        max_length=5.00,
+    )
+
+    tracker = ObjectTracker(
+        max_match_distance=1.0,
+        velocity_window_size=5,
+        dynamic_speed_threshold=0.5,
+        dynamic_confirm_frames=3,
+        max_missed_frames=3,
+    )
+
+    command_limiter = pp_base.LongitudinalCommandLimiter(
+        pp_base.LONGITUDINAL_CMD_RATE_PER_SEC
+    )
+
+    previous_scan_timestamp = None
+    last_processed_timestamp = None
+    previous_ego_pose = None
+    previous_control_time = time.time()
+    scan_number = 0
+
+    try:
+        lidar_receiver.start()
+        print("[READY] GPS / IMU / Competition Status / LiDAR")
+        print("[WAIT] Waiting for first fresh LiDAR scan...")
+
+        while True:
+            ego_pose = read_ego_pose(gps_receiver, imu_receiver)
+            if ego_pose is None:
+                time.sleep(0.03)
+                continue
+            ego_x, ego_y, ego_yaw = ego_pose
+
+            current_speed_kmh, speed_valid = speed_receiver.read()
+            if not speed_valid:
+                if args.drive and ctrl_sender is not None:
+                    send_control(ctrl_sender, 0.0, 1.0, 0.0)
+                print("[WAIT] Competition Vehicle Status - braking for safety")
+                time.sleep(0.05)
+                continue
+
+            latest = lidar_receiver.get_latest()
+            if latest is None:
+                time.sleep(0.01)
+                continue
+
+            points, stats = latest
+            if points is None or not stats.get("fresh", False):
+                if args.drive and ctrl_sender is not None:
+                    send_control(ctrl_sender, 0.0, 1.0, 0.0)
+                time.sleep(0.01)
+                continue
+
+            scan_timestamp = stats.get("timestamp")
+            if scan_timestamp is None or scan_timestamp == last_processed_timestamp:
+                time.sleep(0.005)
+                continue
+
+            last_processed_timestamp = scan_timestamp
+            scan_number += 1
+
+            if previous_scan_timestamp is None:
+                dt = 0.1
+            else:
+                dt = scan_timestamp - previous_scan_timestamp
+                if dt <= 0.0 or dt > 1.0:
+                    dt = 0.1
+            previous_scan_timestamp = scan_timestamp
+
+            if previous_ego_pose is None:
+                delta_forward = 0.0
+                delta_left = 0.0
+                delta_yaw = 0.0
+            else:
+                _, _, delta_forward, delta_left, delta_yaw = calculate_ego_motion(
+                    previous_ego_pose[0],
+                    previous_ego_pose[1],
+                    previous_ego_pose[2],
+                    ego_x,
+                    ego_y,
+                    ego_yaw,
+                )
+            previous_ego_pose = (ego_x, ego_y, ego_yaw)
+
+            vehicle_points = convert_lidar_to_vehicle(points)
+            obstacles, non_ground_points, _ = detector.detect(vehicle_points)
+
+            tracked_obstacles = tracker.update(
+                obstacles,
+                dt,
+                delta_x=delta_forward,
+                delta_y=delta_left,
+                delta_yaw=delta_yaw,
+            )
+
+            planner_obstacles = tracked_list_to_planner_obstacles(
+                tracked_obstacles,
+                ego_x=ego_x,
+                ego_y=ego_y,
+                ego_yaw=ego_yaw,
+                confidence=1.0,
+            )
+
+            plan_result = planner.plan(
+                ego_x=ego_x,
+                ego_y=ego_y,
+                obstacles=planner_obstacles,
+            )
+
+            now = time.time()
+            dt_control = max(1e-3, now - previous_control_time)
+            previous_control_time = now
+
+            if plan_result.status == "STOP_REQUIRED":
+                path_source = "STOP_REQUIRED"
+                selected_path = plan_result.local_path
+                pp_result = None
+                target_speed_kmh = 0.0
+                steering = 0.0
+                accel_cmd = 0.0
+                brake_cmd = 1.0
+                signed_cmd = -1.0
+                speed_error = -current_speed_kmh
+                control_zone = "STOP_REQUIRED"
+                command_limiter.reset()
+            else:
+                path_source = (
+                    "LOCAL_AVOIDANCE"
+                    if plan_result.status == "AVOIDING"
+                    else "GLOBAL_CLEAR"
+                )
+                selected_path = plan_result.local_path
+                pp_result, _ = calculate_selected_path_pure_pursuit(
+                    selected_path,
+                    ego_x,
+                    ego_y,
+                    ego_yaw,
+                )
+
+                target_speed_kmh = min(
+                    TEST_SPEED_LIMIT_KPH,
+                    max(0.0, float(plan_result.recommended_speed_kph)),
+                )
+
+                if pp_result is None:
+                    steering = 0.0
+                    target_speed_kmh = 0.0
+                    desired_accel = 0.0
+                    desired_brake = pp_base.PATH_LOST_BRAKE_CMD
+                    speed_error = -current_speed_kmh
+                    control_zone = "PATH_LOST"
+                else:
+                    steering = pp_result["steering"]
+                    (
+                        desired_accel,
+                        desired_brake,
+                        speed_error,
+                        control_zone,
+                    ) = pp_base.longitudinal_policy(
+                        target_speed_kmh,
+                        current_speed_kmh,
+                    )
+
+                accel_cmd, brake_cmd, signed_cmd = command_limiter.update(
+                    desired_accel,
+                    desired_brake,
+                    dt_control,
+                )
+
+            if args.drive and ctrl_sender is not None:
+                send_control(
+                    ctrl_sender,
+                    accel_cmd,
+                    brake_cmd,
+                    steering,
+                )
+
+            print("\033[2J\033[H", end="")
+            print("=" * 76)
+            print(" STATIC OBSTACLE AVOIDANCE + PURE PURSUIT - 5 km/h TEST")
+            print("=" * 76)
+            print(f"MODE          : {'DRIVE' if args.drive else 'DRY-RUN'}")
+            print(f"SCAN          : {scan_number}")
+            print(
+                f"EGO           : x={ego_x:.3f}, y={ego_y:.3f}, "
+                f"yaw={math.degrees(ego_yaw):.2f} deg"
+            )
+            print(
+                f"EGO MOTION    : forward={delta_forward:+.3f} m, "
+                f"left={delta_left:+.3f} m, "
+                f"dyaw={math.degrees(delta_yaw):+.3f} deg"
+            )
+            print(
+                f"LIDAR         : points={len(vehicle_points)}, "
+                f"non_ground={len(non_ground_points)}, detected={len(obstacles)}"
+            )
+            print(
+                f"TRACK/GLOBAL  : {len(tracked_obstacles)} / "
+                f"{len(planner_obstacles)} objects"
+            )
+            print()
+            print(f"PLANNER       : {plan_result.status}")
+            print(f"OBSTACLE ID   : {plan_result.obstacle_id}")
+            print(f"AVOID SIDE    : {plan_result.avoidance_side}")
+            print(f"PATH SOURCE   : {path_source}")
+            print(f"PATH POINTS   : {len(selected_path)}")
+            print(f"PLAN SPEED    : {plan_result.recommended_speed_kph:.1f} km/h")
+            print(f"TARGET SPEED  : {target_speed_kmh:.1f} km/h")
+            print(f"COMP SPEED    : {current_speed_kmh:.2f} km/h")
+            print()
+
+            if plan_result.status == "STOP_REQUIRED":
+                print("PURE PURSUIT  : BYPASSED - STOP REQUEST")
+            elif pp_result is None:
+                print("PURE PURSUIT  : LOOKAHEAD NOT FOUND")
+            else:
+                print(
+                    f"PURE PURSUIT  : nearest={pp_result['nearest_index']}, "
+                    f"target={pp_result['target_index']}"
+                )
+                print(
+                    f"TARGET LOCAL  : x={pp_result['local_x']:.2f} m, "
+                    f"y={pp_result['local_y']:.2f} m"
+                )
+
+            print(
+                f"STEERING      : {steering:.5f} rad "
+                f"({math.degrees(steering):.2f} deg)"
+            )
+            print(f"CTRL ZONE     : {control_zone}")
+            print(f"SPEED ERROR   : {speed_error:+.2f} km/h")
+            print(f"LONG CMD      : {signed_cmd:+.3f}")
+            print(f"ACCEL         : {accel_cmd:.3f}")
+            print(f"BRAKE         : {brake_cmd:.3f}")
+            print()
+
+            if args.drive:
+                print("[DRIVE] EgoCtrlCmd transmitted to 127.0.0.1:9093")
+            else:
+                print("[DRY-RUN] NO EgoCtrlCmd transmitted.")
+
+    except KeyboardInterrupt:
+        print()
+        print("[STOP] Ctrl+C received.")
+        if args.drive and ctrl_sender is not None:
+            print("[STOP] Sending full-brake stop command.")
+            for _ in range(10):
+                send_control(ctrl_sender, 0.0, 1.0, 0.0)
+                time.sleep(0.05)
+    finally:
+        lidar_receiver.stop()
+        print("[STOP] LiDAR receiver stopped.")
+
+
+if __name__ == "__main__":
+    main()
