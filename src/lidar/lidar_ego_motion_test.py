@@ -30,8 +30,8 @@ IMPORTANT
 ---------
 - This file DOES NOT send EgoCtrlCmd.
 - Ego-motion is calculated once per new LiDAR scan for diagnostics.
-- Tracker ego-motion compensation is still OFF in this validation step.
-- First validate stationary noise, then validate signs at very low manual speed.
+- Tracker ego-motion compensation is ON.
+- Validate Track ID continuity and static-object residual speed at low manual speed.
 """
 
 import math
@@ -699,7 +699,7 @@ def main():
             #
             # IMPORTANT:
             # Calculate once per NEW LiDAR scan.
-            # Do not feed these values to the tracker yet.
+            # These values are fed to ObjectTracker below.
             # =================================================
 
             if previous_ego_pose is None:
@@ -765,16 +765,24 @@ def main():
             # =================================================
             # #3 Object Tracking
             #
-            # Ego-motion compensation is still OFF.
+            # Ego-motion compensation is ON.
+            #
+            # Tracker coordinates:
+            #     +X = Forward
+            #     +Y = Left
+            #
+            # The motion values below describe how the ego
+            # vehicle moved from the previous processed LiDAR
+            # frame to the current processed LiDAR frame.
             # =================================================
 
             tracked_obstacles = (
                 tracker.update(
                     obstacles,
                     dt,
-                    delta_x=0.0,
-                    delta_y=0.0,
-                    delta_yaw=0.0,
+                    delta_x=delta_forward,
+                    delta_y=delta_left,
+                    delta_yaw=delta_yaw,
                 )
             )
 
