@@ -66,6 +66,84 @@ LOCAL_PATH_SEARCH_SIZE = 80
 CONTROL_IP = "127.0.0.1"
 CONTROL_PORT = 9093
 
+# Once an avoidance path is accepted, keep following the same path until the
+# vehicle has passed the return-to-global section.  This prevents one-frame
+# detector/planner flicker from switching LOCAL -> GLOBAL -> LOCAL mid-manoeuvre.
+AVOIDANCE_RELEASE_TOLERANCE_M = 0.15
+AVOIDANCE_RELEASE_BUFFER_POINTS = 3
+
+
+class AvoidancePathLatch:
+    def __init__(self, global_path):
+        self.global_path = prepare_path(global_path)
+        self.active = False
+        self.path = None
+        self.obstacle_id = None
+        self.side = None
+        self.release_index = None
+
+    def _calculate_release_index(self, local_path):
+        local_xy = prepare_path(local_path)
+        if len(local_xy) == 0:
+            return 0
+
+        deviations = []
+        for point in local_xy:
+            delta = self.global_path - point
+            d2 = np.einsum("ij,ij->i", delta, delta)
+            deviations.append(math.sqrt(float(np.min(d2))))
+
+        shifted = [
+            i for i, distance in enumerate(deviations)
+            if distance > AVOIDANCE_RELEASE_TOLERANCE_M
+        ]
+        if not shifted:
+            return max(0, len(local_xy) - 1)
+
+        return min(
+            len(local_xy) - 1,
+            shifted[-1] + AVOIDANCE_RELEASE_BUFFER_POINTS,
+        )
+
+    def start(self, plan_result):
+        self.active = True
+        self.path = np.asarray(plan_result.local_path, dtype=float).copy()
+        self.obstacle_id = plan_result.obstacle_id
+        self.side = plan_result.avoidance_side
+        self.release_index = self._calculate_release_index(self.path)
+
+    def apply(self, raw_plan_result, ego_x, ego_y):
+        if not self.active:
+            if raw_plan_result.status == "AVOIDING":
+                self.start(raw_plan_result)
+            return raw_plan_result, "RAW"
+
+        local_xy = prepare_path(self.path)
+        nearest = pp_base.find_nearest_waypoint(local_xy, ego_x, ego_y)
+
+        if nearest >= self.release_index:
+            self.active = False
+            self.path = None
+            self.obstacle_id = None
+            self.side = None
+            self.release_index = None
+            return raw_plan_result, "RELEASED"
+
+        # While latched, ignore transient CLEAR/AVOIDING/STOP_REQUIRED results
+        # caused by the same obstacle being intermittently re-detected.  The
+        # accepted collision-free path is fixed in global coordinates.
+        from static_obstacle_planner import PlanResult
+        latched = PlanResult(
+            "AVOIDING",
+            self.path.copy(),
+            self.obstacle_id,
+            self.side,
+            8.0,
+            "Latched avoidance path held until return-to-global is complete",
+        )
+        return latched, f"LATCHED {nearest}/{self.release_index}"
+
+
 
 def prepare_path(path):
     array = np.asarray(path, dtype=float)
@@ -158,6 +236,7 @@ def main():
     global_path = global_path[:, :3]
 
     planner = StaticObstaclePlanner(global_path, str(STATIC_CONFIG_FILE))
+    avoidance_latch = AvoidancePathLatch(global_path)
 
     network_config = load_network_config()
     gps_cfg = network_config["gps"]
@@ -280,10 +359,15 @@ def main():
                 confidence=1.0,
             )
 
-            plan_result = planner.plan(
+            raw_plan_result = planner.plan(
                 ego_x=ego_x,
                 ego_y=ego_y,
                 obstacles=planner_obstacles,
+            )
+            plan_result, latch_state = avoidance_latch.apply(
+                raw_plan_result,
+                ego_x,
+                ego_y,
             )
 
             now = time.time()
@@ -378,7 +462,9 @@ def main():
                 f"{len(planner_obstacles)} objects"
             )
             print()
+            print(f"PLANNER RAW   : {raw_plan_result.status}")
             print(f"PLANNER       : {plan_result.status}")
+            print(f"PATH LATCH    : {latch_state}")
             print(f"OBSTACLE ID   : {plan_result.obstacle_id}")
             print(f"AVOID SIDE    : {plan_result.avoidance_side}")
             print(f"PATH SOURCE   : {path_source}")
