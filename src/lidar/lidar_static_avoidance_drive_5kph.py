@@ -376,7 +376,7 @@ def main():
             previous_ego_pose = (ego_x, ego_y, ego_yaw)
 
             vehicle_points = convert_lidar_to_vehicle(points)
-            obstacles, non_ground_points, _ = detector.detect(vehicle_points)
+            obstacles, non_ground_points, cluster_labels = detector.detect(vehicle_points)
 
             tracked_obstacles = tracker.update(
                 obstacles,
@@ -507,13 +507,31 @@ def main():
                         "cluster_id",
                         getattr(obstacle, "id", None),
                     )
+                    cluster_mask = cluster_labels == obstacle_id
+                    cluster_points = non_ground_points[cluster_mask]
+                    if len(cluster_points) > 0:
+                        x_min = float(np.min(cluster_points[:, 0]))
+                        x_max = float(np.max(cluster_points[:, 0]))
+                        y_min = float(np.min(cluster_points[:, 1]))
+                        y_max = float(np.max(cluster_points[:, 1]))
+                        point_count = len(cluster_points)
+                    else:
+                        x_min = x_max = y_min = y_max = float("nan")
+                        point_count = 0
+
                     print(
                         f"  ID={obstacle_id} "
                         f"x={obstacle.x:.2f} m, "
                         f"y={obstacle.y:.2f} m, "
                         f"width={obstacle.width:.2f} m, "
                         f"length={obstacle.length:.2f} m, "
-                        f"distance={obstacle.distance:.2f} m"
+                        f"distance={obstacle.distance:.2f} m, "
+                        f"points={point_count}"
+                    )
+                    print(
+                        f"       range: "
+                        f"x=[{x_min:.2f}, {x_max:.2f}] m, "
+                        f"y=[{y_min:.2f}, {y_max:.2f}] m"
                     )
             print()
             print(f"PLANNER RAW   : {raw_plan_result.status}")
