@@ -60,7 +60,8 @@ from lidar_ego_motion_test import (
 GLOBAL_PATH_FILE = PROJECT_ROOT / "path" / "2026_molit_comp_global_path.txt"
 STATIC_CONFIG_FILE = LIDAR_DIR / "static_obstacle_config.json"
 
-TEST_SPEED_LIMIT_KPH = 5.0
+DEFAULT_TEST_SPEED_KPH = 5.0
+ALLOWED_TEST_SPEEDS_KPH = (5.0, 10.0, 15.0, 20.0, 25.0)
 LOCAL_PATH_LOOKAHEAD_M = 2.5
 LOCAL_PATH_SEARCH_SIZE = 80
 CONTROL_IP = "127.0.0.1"
@@ -211,13 +212,21 @@ def main():
         action="store_true",
         help="실제 MORAI로 EgoCtrlCmd 송신. 생략하면 DRY-RUN.",
     )
+    parser.add_argument(
+        "--speed",
+        type=float,
+        choices=ALLOWED_TEST_SPEEDS_KPH,
+        default=DEFAULT_TEST_SPEED_KPH,
+        help="시험 목표속도(km/h): 5, 10, 15, 20, 25 중 선택. 기본값 5.",
+    )
     args = parser.parse_args()
+    test_speed_kph = float(args.speed)
 
     print("=" * 76)
-    print(" STATIC OBSTACLE AVOIDANCE + PURE PURSUIT - 5 km/h TEST")
+    print(f" STATIC OBSTACLE AVOIDANCE + PURE PURSUIT - {test_speed_kph:.0f} km/h TEST")
     print("=" * 76)
     print("[MODE] DRIVE" if args.drive else "[MODE] DRY-RUN")
-    print("[LIMIT] Hard speed limit = 5.0 km/h")
+    print(f"[LIMIT] Test speed = {test_speed_kph:.1f} km/h")
     print("[PATH] CLEAR -> GLOBAL / AVOIDING -> LOCAL_AVOIDANCE")
     print("[STOP] STOP_REQUIRED -> accel 0 / brake 1.0")
     print(f"[CTRL] {CONTROL_IP}:{CONTROL_PORT} / ctrl_mode=2 / cmd_type=1")
@@ -401,8 +410,8 @@ def main():
                 )
 
                 target_speed_kmh = min(
-                    TEST_SPEED_LIMIT_KPH,
-                    max(0.0, float(plan_result.recommended_speed_kph)),
+                    test_speed_kph,
+                    test_speed_kph,
                 )
 
                 if pp_result is None:
@@ -440,7 +449,7 @@ def main():
 
             print("\033[2J\033[H", end="")
             print("=" * 76)
-            print(" STATIC OBSTACLE AVOIDANCE + PURE PURSUIT - 5 km/h TEST")
+            print(f" STATIC OBSTACLE AVOIDANCE + PURE PURSUIT - {test_speed_kph:.0f} km/h TEST")
             print("=" * 76)
             print(f"MODE          : {'DRIVE' if args.drive else 'DRY-RUN'}")
             print(f"SCAN          : {scan_number}")
@@ -470,6 +479,7 @@ def main():
             print(f"PATH SOURCE   : {path_source}")
             print(f"PATH POINTS   : {len(selected_path)}")
             print(f"PLAN SPEED    : {plan_result.recommended_speed_kph:.1f} km/h")
+            print(f"TEST LIMIT    : {test_speed_kph:.1f} km/h")
             print(f"TARGET SPEED  : {target_speed_kmh:.1f} km/h")
             print(f"COMP SPEED    : {current_speed_kmh:.2f} km/h")
             print()
