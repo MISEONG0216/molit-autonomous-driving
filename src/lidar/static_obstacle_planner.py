@@ -99,6 +99,16 @@ class StaticObstaclePlanner:
         for obs in obstacles:
             if obs.is_dynamic or obs.confidence < 0.5:
                 continue
+
+            # Static-mission-only size filter.
+            # Keep small/thin detections available to ObjectDetector/ObjectTracker
+            # (and later dynamic-obstacle logic), but do not use them as #4
+            # static avoidance targets. The threshold is intentionally configured
+            # here rather than in the shared detector.
+            min_static_width = float(self.cfg.get("min_static_obstacle_width_m", 0.0))
+            if obs.width < min_static_width:
+                continue
+
             idx = nearest_index(self.path, obs.x, obs.y)
             if idx not in order:
                 continue
