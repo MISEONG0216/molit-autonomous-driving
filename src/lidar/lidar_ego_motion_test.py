@@ -29,8 +29,9 @@ MORAI VLP16
 IMPORTANT
 ---------
 - This file DOES NOT send EgoCtrlCmd.
-- The vehicle must remain stationary during this test.
-- Tracker ego-motion compensation is still OFF.
+- Ego-motion is calculated once per new LiDAR scan for diagnostics.
+- Tracker ego-motion compensation is still OFF in this validation step.
+- First validate stationary noise, then validate signs at very low manual speed.
 """
 
 import math
@@ -325,6 +326,74 @@ def read_ego_pose(
 
 
 # ============================================================
+# Ego motion diagnostics
+# ============================================================
+
+def normalize_angle(angle):
+    """
+    Normalize angle to [-pi, pi].
+    """
+
+    return math.atan2(
+        math.sin(angle),
+        math.cos(angle),
+    )
+
+
+def calculate_ego_motion(
+    prev_x,
+    prev_y,
+    prev_yaw,
+    curr_x,
+    curr_y,
+    curr_yaw,
+):
+    """
+    Calculate ego displacement between two processed LiDAR frames.
+
+    Global displacement is rotated into the PREVIOUS vehicle frame:
+
+        +X = Forward
+        +Y = Left
+
+    Returns:
+        dx_global
+        dy_global
+        delta_forward
+        delta_left
+        delta_yaw
+    """
+
+    dx_global = curr_x - prev_x
+    dy_global = curr_y - prev_y
+
+    cos_yaw = math.cos(prev_yaw)
+    sin_yaw = math.sin(prev_yaw)
+
+    delta_forward = (
+        cos_yaw * dx_global
+        + sin_yaw * dy_global
+    )
+
+    delta_left = (
+        -sin_yaw * dx_global
+        + cos_yaw * dy_global
+    )
+
+    delta_yaw = normalize_angle(
+        curr_yaw - prev_yaw
+    )
+
+    return (
+        dx_global,
+        dy_global,
+        delta_forward,
+        delta_left,
+        delta_yaw,
+    )
+
+
+# ============================================================
 # Main
 # ============================================================
 
@@ -501,6 +570,10 @@ def main():
     previous_scan_timestamp = None
     last_processed_timestamp = None
 
+    # Previous ego pose sampled for the previous processed LiDAR scan.
+    # Tuple: (ego_x, ego_y, ego_yaw)
+    previous_ego_pose = None
+
     scan_number = 0
 
     try:
@@ -622,6 +695,52 @@ def main():
             )
 
             # =================================================
+            # Ego motion diagnostics
+            #
+            # IMPORTANT:
+            # Calculate once per NEW LiDAR scan.
+            # Do not feed these values to the tracker yet.
+            # =================================================
+
+            if previous_ego_pose is None:
+
+                dx_global = 0.0
+                dy_global = 0.0
+                delta_forward = 0.0
+                delta_left = 0.0
+                delta_yaw = 0.0
+
+            else:
+
+                (
+                    prev_ego_x,
+                    prev_ego_y,
+                    prev_ego_yaw,
+                ) = previous_ego_pose
+
+                (
+                    dx_global,
+                    dy_global,
+                    delta_forward,
+                    delta_left,
+                    delta_yaw,
+                ) = calculate_ego_motion(
+                    prev_ego_x,
+                    prev_ego_y,
+                    prev_ego_yaw,
+                    ego_x,
+                    ego_y,
+                    ego_yaw,
+                )
+
+            # Update only after the current-frame motion was calculated.
+            previous_ego_pose = (
+                ego_x,
+                ego_y,
+                ego_yaw,
+            )
+
+            # =================================================
             # #1 -> #2 coordinate conversion
             # =================================================
 
@@ -706,6 +825,20 @@ def main():
                 f"y={ego_y:.3f}, "
                 f"yaw="
                 f"{math.degrees(ego_yaw):.2f} deg"
+            )
+
+            print(
+                f"[EGO MOTION] "
+                f"global_dx={dx_global:+.4f} m, "
+                f"global_dy={dy_global:+.4f} m"
+            )
+
+            print(
+                f"             "
+                f"forward={delta_forward:+.4f} m, "
+                f"left={delta_left:+.4f} m, "
+                f"dyaw="
+                f"{math.degrees(delta_yaw):+.3f} deg"
             )
 
             # -------------------------------------------------
