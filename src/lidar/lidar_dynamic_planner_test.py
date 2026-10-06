@@ -108,7 +108,7 @@ def main():
     scan_number = 0
     previous_raw_status = None
     previous_confirmed_status = None
-    consecutive_risk_scans = 0
+    risk_count_by_track = {}
 
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     run_stamp = time.strftime("%Y%m%d_%H%M%S")
@@ -123,7 +123,7 @@ def main():
         "velocity_x_mps", "velocity_y_mps", "track_speed_mps",
         "is_dynamic", "dynamic_count",
         "path_state", "prediction_state", "time_to_path_s",
-        "ego_time_to_object_s", "time_gap_s",
+        "predicted_cross_x_m", "ego_time_to_cross_s", "time_gap_s",
         "object_result",
         "raw_final_status", "confirmed_status", "risk_confirm_count",
         "final_obstacle_id", "final_reason",
@@ -206,14 +206,30 @@ def main():
             final_result = dynamic_planner.plan(tracked_obstacles)
             raw_status = final_result.status
 
-            if raw_status == "RISK":
-                consecutive_risk_scans += 1
+            # Confirm risk per persistent track ID.  A risk from one object
+            # must not continue the counter of another object.
+            current_risk_track = (
+                final_result.obstacle_id
+                if raw_status == "RISK"
+                else None
+            )
+
+            if current_risk_track is None:
+                risk_count_by_track.clear()
+                current_risk_count = 0
             else:
-                consecutive_risk_scans = 0
+                previous_count = risk_count_by_track.get(current_risk_track, 0)
+                risk_count_by_track = {
+                    current_risk_track: previous_count + 1
+                }
+                current_risk_count = risk_count_by_track[current_risk_track]
 
             confirmed_status = (
                 "RISK_CONFIRMED"
-                if consecutive_risk_scans >= RISK_CONFIRM_SCANS
+                if (
+                    current_risk_track is not None
+                    and current_risk_count >= RISK_CONFIRM_SCANS
+                )
                 else "CLEAR"
             )
 
@@ -236,7 +252,7 @@ def main():
                 f"detected={len(obstacles)} "
                 f"tracked={len(tracked_obstacles)} "
                 f"=> RAW={raw_status} "
-                f"confirm={consecutive_risk_scans}/{RISK_CONFIRM_SCANS} "
+                f"confirm={current_risk_count}/{RISK_CONFIRM_SCANS} "
                 f"=> {confirmed_status} "
                 f"track={final_result.obstacle_id} "
                 f"time_to_path={fmt(final_result.time_to_path_s)} s"
@@ -262,20 +278,33 @@ def main():
 
                 object_result = dynamic_planner.evaluate_obstacle(obstacle)
 
-                # Diagnostic only: compare when the object reaches the ego-path
-                # corridor with when the ego reaches the object's current
-                # longitudinal position.  Do NOT use this to brake yet.
-                if ego_speed_mps >= MIN_EGO_SPEED_FOR_TTC_MPS and x > 0.0:
-                    ego_time_to_object = x / ego_speed_mps
+                # Diagnostic only: predict the object's longitudinal X
+                # position at the moment it reaches the ego-path corridor.
+                # Then compare that event time with the ego's arrival time at
+                # the same predicted X.  Do NOT use this to brake yet.
+                if object_result.time_to_path_s is not None:
+                    predicted_cross_x = (
+                        x
+                        + velocity_x * object_result.time_to_path_s
+                    )
                 else:
-                    ego_time_to_object = None
+                    predicted_cross_x = None
+
+                if (
+                    predicted_cross_x is not None
+                    and predicted_cross_x > 0.0
+                    and ego_speed_mps >= MIN_EGO_SPEED_FOR_TTC_MPS
+                ):
+                    ego_time_to_cross = predicted_cross_x / ego_speed_mps
+                else:
+                    ego_time_to_cross = None
 
                 if (
                     object_result.time_to_path_s is not None
-                    and ego_time_to_object is not None
+                    and ego_time_to_cross is not None
                 ):
                     time_gap = abs(
-                        ego_time_to_object - object_result.time_to_path_s
+                        ego_time_to_cross - object_result.time_to_path_s
                     )
                 else:
                     time_gap = None
@@ -294,7 +323,8 @@ def main():
                         f"path={object_result.path_state} "
                         f"prediction={object_result.prediction_state} "
                         f"time_to_path={fmt(object_result.time_to_path_s)} s "
-                        f"ego_arrival={fmt(ego_time_to_object)} s "
+                        f"cross_x={fmt(predicted_cross_x)} m "
+                        f"ego_to_cross={fmt(ego_time_to_cross)} s "
                         f"gap={fmt(time_gap)} s "
                         f"=> {object_result.status}"
                     )
@@ -309,12 +339,13 @@ def main():
                     object_result.path_state,
                     object_result.prediction_state,
                     object_result.time_to_path_s,
-                    ego_time_to_object,
+                    predicted_cross_x,
+                    ego_time_to_cross,
                     time_gap,
                     object_result.status,
                     raw_status,
                     confirmed_status,
-                    consecutive_risk_scans,
+                    current_risk_count,
                     final_result.obstacle_id,
                     final_result.reason,
                 ])
