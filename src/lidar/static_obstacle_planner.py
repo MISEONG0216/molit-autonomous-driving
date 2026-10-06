@@ -29,6 +29,7 @@ class PlanResult:
     avoidance_side: Optional[str]
     recommended_speed_kph: float
     reason: str
+    candidate_diagnostics: Optional[List[dict]] = None
 
 
 def load_path(path_file: str) -> np.ndarray:
@@ -186,14 +187,15 @@ class StaticObstaclePlanner:
         base[:, :2] += normals * offsets[:, None]
         return base, offsets
 
-    def _is_safe(self, path: np.ndarray, offsets: np.ndarray, obs: Obstacle) -> bool:
+    def _candidate_safety_diagnostic(
+        self, path: np.ndarray, offsets: np.ndarray, obs: Obstacle
+    ) -> dict:
         boundary_limit = (
             self.cfg["drivable_width_m"] / 2.0
             - self.cfg["vehicle_width_m"] / 2.0
             - self.cfg["safety_margin_m"]
         )
-        if np.max(np.abs(offsets)) > boundary_limit:
-            return False
+        max_abs_offset = float(np.max(np.abs(offsets)))
 
         # Conservative circular footprint for the first implementation.
         safe_radius = (
@@ -202,7 +204,28 @@ class StaticObstaclePlanner:
             + self.cfg["safety_margin_m"]
         )
         distances = np.linalg.norm(path[:, :2] - np.array([obs.x, obs.y]), axis=1)
-        return bool(np.min(distances) >= safe_radius)
+        min_clearance = float(np.min(distances))
+
+        boundary_ok = max_abs_offset <= boundary_limit
+        collision_ok = min_clearance >= safe_radius
+        if not boundary_ok:
+            reason = "BOUNDARY"
+        elif not collision_ok:
+            reason = "COLLISION"
+        else:
+            reason = "SAFE"
+
+        return {
+            "safe": bool(boundary_ok and collision_ok),
+            "reason": reason,
+            "boundary_limit_m": float(boundary_limit),
+            "max_abs_offset_m": max_abs_offset,
+            "safe_radius_m": float(safe_radius),
+            "min_clearance_m": min_clearance,
+        }
+
+    def _is_safe(self, path: np.ndarray, offsets: np.ndarray, obs: Obstacle) -> bool:
+        return bool(self._candidate_safety_diagnostic(path, offsets, obs)["safe"])
 
     def plan(
         self, ego_x: float, ego_y: float, obstacles: List[Obstacle]
@@ -218,9 +241,13 @@ class StaticObstaclePlanner:
 
         obs, obs_idx, obs_d = selected
         candidates = []
+        candidate_diagnostics = []
         for offset in self.cfg["candidate_offsets_m"]:
             candidate, offsets = self._candidate_path(ego_index, obs_idx, float(offset))
-            if self._is_safe(candidate, offsets, obs):
+            diagnostic = self._candidate_safety_diagnostic(candidate, offsets, obs)
+            diagnostic["offset_m"] = float(offset)
+            candidate_diagnostics.append(diagnostic)
+            if diagnostic["safe"]:
                 # Prefer the opposite side of the obstacle, then smaller displacement.
                 opposite_penalty = 0.0 if offset * obs_d <= 0.0 else 10.0
                 candidates.append((opposite_penalty + abs(offset), offset, candidate))
@@ -229,6 +256,7 @@ class StaticObstaclePlanner:
             return PlanResult(
                 "STOP_REQUIRED", self.path[default_indices].copy(), obs.id, None, 0.0,
                 "No collision-free candidate inside the configured drivable boundary",
+                candidate_diagnostics,
             )
 
         _, offset, local_path = min(candidates, key=lambda item: item[0])
@@ -239,5 +267,6 @@ class StaticObstaclePlanner:
             "LEFT" if offset > 0.0 else "RIGHT",
             8.0,
             "Collision-free mock avoidance path generated",
+            candidate_diagnostics,
         )
 
