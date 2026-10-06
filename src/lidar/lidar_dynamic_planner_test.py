@@ -43,6 +43,7 @@ from lidar_ego_motion_test import (
 )
 
 LOG_DIR = PROJECT_ROOT / "logs" / "lidar_dynamic_planner"
+RISK_CONFIRM_SCANS = 3
 
 
 def fmt(value, digits=2):
@@ -57,6 +58,7 @@ def main():
     print("=" * 76)
     print("[MODE] DRY-RUN ONLY - EgoCtrlCmd is NOT transmitted")
     print("[RISK] dynamic + IN_PATH, or predicted path entry within 5.0 s")
+    print(f"[CONFIRM] RISK must persist for {RISK_CONFIRM_SCANS} consecutive scans")
     print()
 
     network_config = load_network_config()
@@ -99,7 +101,9 @@ def main():
     last_processed_timestamp = None
     previous_ego_pose = None
     scan_number = 0
-    previous_status = None
+    previous_raw_status = None
+    previous_confirmed_status = None
+    consecutive_risk_scans = 0
 
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     run_stamp = time.strftime("%Y%m%d_%H%M%S")
@@ -115,7 +119,8 @@ def main():
         "is_dynamic", "dynamic_count",
         "path_state", "prediction_state", "time_to_path_s",
         "object_result",
-        "final_status", "final_obstacle_id", "final_reason",
+        "raw_final_status", "confirmed_status", "risk_confirm_count",
+        "final_obstacle_id", "final_reason",
     ])
     log_handle.flush()
 
@@ -188,19 +193,40 @@ def main():
             )
 
             final_result = dynamic_planner.plan(tracked_obstacles)
+            raw_status = final_result.status
 
-            if final_result.status != previous_status:
+            if raw_status == "RISK":
+                consecutive_risk_scans += 1
+            else:
+                consecutive_risk_scans = 0
+
+            confirmed_status = (
+                "RISK_CONFIRMED"
+                if consecutive_risk_scans >= RISK_CONFIRM_SCANS
+                else "CLEAR"
+            )
+
+            if raw_status != previous_raw_status:
                 print(
-                    f"[EVENT] SCAN {scan_number}: "
-                    f"{previous_status} -> {final_result.status}"
+                    f"[RAW EVENT] SCAN {scan_number}: "
+                    f"{previous_raw_status} -> {raw_status}"
                 )
-                previous_status = final_result.status
+                previous_raw_status = raw_status
+
+            if confirmed_status != previous_confirmed_status:
+                print(
+                    f"[CONFIRMED EVENT] SCAN {scan_number}: "
+                    f"{previous_confirmed_status} -> {confirmed_status}"
+                )
+                previous_confirmed_status = confirmed_status
 
             print(
                 f"[SCAN {scan_number:05d}] "
                 f"detected={len(obstacles)} "
                 f"tracked={len(tracked_obstacles)} "
-                f"=> #5 {final_result.status} "
+                f"=> RAW={raw_status} "
+                f"confirm={consecutive_risk_scans}/{RISK_CONFIRM_SCANS} "
+                f"=> {confirmed_status} "
                 f"track={final_result.obstacle_id} "
                 f"time_to_path={fmt(final_result.time_to_path_s)} s"
             )
@@ -253,7 +279,9 @@ def main():
                     object_result.prediction_state,
                     object_result.time_to_path_s,
                     object_result.status,
-                    final_result.status,
+                    raw_status,
+                    confirmed_status,
+                    consecutive_risk_scans,
                     final_result.obstacle_id,
                     final_result.reason,
                 ])
@@ -267,7 +295,9 @@ def main():
                     "", "", "", "", "", "", "", "",
                     False, 0,
                     "", "", "", "",
-                    final_result.status,
+                    raw_status,
+                    confirmed_status,
+                    consecutive_risk_scans,
                     final_result.obstacle_id,
                     final_result.reason,
                 ])
