@@ -67,6 +67,7 @@ MAX_ASPECT_RATIO = 6.50
 HISTORY_SIZE = 7
 MIN_STABLE_VOTES = 5
 STABLE_SIGNAL_HOLD_SEC = float(os.getenv("TRAFFIC_SIGNAL_HOLD_SEC", "0.60"))
+YOLO_IMGSZ = int(os.getenv("TRAFFIC_YOLO_IMGSZ", "640"))
 
 # ---------------- Universal stop-reference detector ----------------
 # The camera sees a zebra crossing as several long white "fingers" extending
@@ -374,6 +375,7 @@ def main():
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[INFO] device={device}")
+    print(f"[INFO] YOLO mode=vehicle-ROI only, imgsz={YOLO_IMGSZ}")
     classifier, detector = load_models(device)
     print("[OK] traffic-light models loaded")
 
@@ -465,12 +467,32 @@ def main():
             candidates = []
             raw_signal_boxes = []
 
-            result = detector(frame, imgsz=1280, conf=0.25, verbose=False)[0]
+            # YOLO is the CPU bottleneck.  Run it only on the already-defined
+            # vehicle-signal ROI, then map detections back to full-frame coords.
+            # This preserves the classifier/voting logic while reducing inference
+            # area substantially compared with full-frame imgsz=1280.
+            vehicle_roi_frame = frame[
+                roi_top:roi_bottom,
+                roi_left:roi_right,
+            ]
+            inference_started = time.time()
+            result = detector(
+                vehicle_roi_frame,
+                imgsz=YOLO_IMGSZ,
+                conf=0.25,
+                verbose=False,
+            )[0]
+            inference_ms = (time.time() - inference_started) * 1000.0
+
             for box in result.boxes:
                 if int(box.cls[0].item()) != 9:
                     continue
                 confidence = float(box.conf[0].item())
-                xmin, ymin, xmax, ymax = map(int, box.xyxy[0].tolist())
+                rxmin, rymin, rxmax, rymax = map(int, box.xyxy[0].tolist())
+                xmin = rxmin + roi_left
+                ymin = rymin + roi_top
+                xmax = rxmax + roi_left
+                ymax = rymax + roi_top
                 box_width, box_height = xmax - xmin, ymax - ymin
                 center_x, center_y = (xmin + xmax) // 2, (ymin + ymax) // 2
                 aspect = box_width / max(box_height, 1)
@@ -659,7 +681,10 @@ def main():
             cv2.rectangle(frame, (roi_left, roi_top), (roi_right, roi_bottom), (255, 180, 0), 1)
             cv2.putText(
                 frame,
-                f"YOLO TL raw:{len(raw_signal_boxes)} accepted:{len(candidates)}",
+                (
+                    f"YOLO TL raw:{len(raw_signal_boxes)} "
+                    f"accepted:{len(candidates)} {inference_ms:.0f}ms"
+                ),
                 (roi_left + 5, max(20, roi_top + 20)),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 180, 0), 1
             )
