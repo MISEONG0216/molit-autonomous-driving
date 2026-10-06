@@ -32,6 +32,8 @@ from lib.network.UDP import Receiver
 from lib.define.GPS import GPS
 from lib.define.IMU import IMU
 
+from pure_pursuit_competition import CompetitionSpeedReceiver
+
 from lidar_receiver import LidarReceiver
 from object_detection.object_detector import ObjectDetector
 from object_detection.tracker import ObjectTracker
@@ -44,6 +46,7 @@ from lidar_ego_motion_test import (
 
 LOG_DIR = PROJECT_ROOT / "logs" / "lidar_dynamic_planner"
 RISK_CONFIRM_SCANS = 3
+MIN_EGO_SPEED_FOR_TTC_MPS = 0.3
 
 
 def fmt(value, digits=2):
@@ -59,6 +62,7 @@ def main():
     print("[MODE] DRY-RUN ONLY - EgoCtrlCmd is NOT transmitted")
     print("[RISK] dynamic + IN_PATH, or predicted path entry within 5.0 s")
     print(f"[CONFIRM] RISK must persist for {RISK_CONFIRM_SCANS} consecutive scans")
+    print("[TTC] Logging object path-entry time vs ego arrival time (diagnostic only)")
     print()
 
     network_config = load_network_config()
@@ -68,6 +72,7 @@ def main():
     gps_receiver = Receiver(gps_cfg["ip"], int(gps_cfg["port"]), GPS())
     imu_receiver = Receiver(imu_cfg["ip"], int(imu_cfg["port"]), IMU())
     lidar_receiver = LidarReceiver()
+    speed_receiver = CompetitionSpeedReceiver()
 
     detector = ObjectDetector(
         ground_z_threshold=-1.70,
@@ -112,12 +117,13 @@ def main():
     log_writer = csv.writer(log_handle)
     log_writer.writerow([
         "scan",
-        "ego_x", "ego_y", "ego_yaw_deg",
+        "ego_x", "ego_y", "ego_yaw_deg", "ego_speed_kmh",
         "cluster_id", "track_id",
         "object_x", "object_y", "distance",
         "velocity_x_mps", "velocity_y_mps", "track_speed_mps",
         "is_dynamic", "dynamic_count",
         "path_state", "prediction_state", "time_to_path_s",
+        "ego_time_to_object_s", "time_gap_s",
         "object_result",
         "raw_final_status", "confirmed_status", "risk_confirm_count",
         "final_obstacle_id", "final_reason",
@@ -139,6 +145,11 @@ def main():
                 continue
 
             ego_x, ego_y, ego_yaw = ego_pose
+
+            ego_speed_kmh, speed_valid = speed_receiver.read()
+            if not speed_valid:
+                ego_speed_kmh = 0.0
+            ego_speed_mps = max(0.0, float(ego_speed_kmh) / 3.6)
 
             latest = lidar_receiver.get_latest()
             if latest is None:
@@ -251,6 +262,24 @@ def main():
 
                 object_result = dynamic_planner.evaluate_obstacle(obstacle)
 
+                # Diagnostic only: compare when the object reaches the ego-path
+                # corridor with when the ego reaches the object's current
+                # longitudinal position.  Do NOT use this to brake yet.
+                if ego_speed_mps >= MIN_EGO_SPEED_FOR_TTC_MPS and x > 0.0:
+                    ego_time_to_object = x / ego_speed_mps
+                else:
+                    ego_time_to_object = None
+
+                if (
+                    object_result.time_to_path_s is not None
+                    and ego_time_to_object is not None
+                ):
+                    time_gap = abs(
+                        ego_time_to_object - object_result.time_to_path_s
+                    )
+                else:
+                    time_gap = None
+
                 if is_dynamic:
                     print(
                         "  [DYNAMIC] "
@@ -265,12 +294,14 @@ def main():
                         f"path={object_result.path_state} "
                         f"prediction={object_result.prediction_state} "
                         f"time_to_path={fmt(object_result.time_to_path_s)} s "
+                        f"ego_arrival={fmt(ego_time_to_object)} s "
+                        f"gap={fmt(time_gap)} s "
                         f"=> {object_result.status}"
                     )
 
                 diagnostic_rows.append([
                     scan_number,
-                    ego_x, ego_y, math.degrees(ego_yaw),
+                    ego_x, ego_y, math.degrees(ego_yaw), ego_speed_kmh,
                     cluster_id, track_id,
                     x, y, distance,
                     velocity_x, velocity_y, speed,
@@ -278,6 +309,8 @@ def main():
                     object_result.path_state,
                     object_result.prediction_state,
                     object_result.time_to_path_s,
+                    ego_time_to_object,
+                    time_gap,
                     object_result.status,
                     raw_status,
                     confirmed_status,
@@ -291,10 +324,10 @@ def main():
             else:
                 log_writer.writerow([
                     scan_number,
-                    ego_x, ego_y, math.degrees(ego_yaw),
+                    ego_x, ego_y, math.degrees(ego_yaw), ego_speed_kmh,
                     "", "", "", "", "", "", "", "",
                     False, 0,
-                    "", "", "", "",
+                    "", "", "", "", "", "",
                     raw_status,
                     confirmed_status,
                     consecutive_risk_scans,
