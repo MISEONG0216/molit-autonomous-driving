@@ -460,6 +460,7 @@ def main():
             roi_right = int(VEHICLE_ROI[2] * width)
             roi_bottom = int(VEHICLE_ROI[3] * height)
             candidates = []
+            raw_signal_boxes = []
 
             result = detector(frame, imgsz=1280, conf=0.25, verbose=False)[0]
             for box in result.boxes:
@@ -471,13 +472,25 @@ def main():
                 center_x, center_y = (xmin + xmax) // 2, (ymin + ymax) // 2
                 aspect = box_width / max(box_height, 1)
 
+                reject_reason = None
                 if box_width < MIN_BOX_WIDTH or box_height < MIN_BOX_HEIGHT:
-                    continue
-                # Horizontal 3-lamp vehicle signal heads are much wider
-                # than pedestrian signal heads. This rejects most pedestrian lights.
-                if aspect < MIN_ASPECT_RATIO or aspect > MAX_ASPECT_RATIO:
-                    continue
-                if not (roi_left <= center_x <= roi_right and roi_top <= center_y <= roi_bottom):
+                    reject_reason = "SIZE"
+                elif aspect < MIN_ASPECT_RATIO or aspect > MAX_ASPECT_RATIO:
+                    reject_reason = "ASPECT"
+                elif not (
+                    roi_left <= center_x <= roi_right
+                    and roi_top <= center_y <= roi_bottom
+                ):
+                    reject_reason = "ROI"
+
+                raw_signal_boxes.append({
+                    "xmin": xmin, "ymin": ymin, "xmax": xmax, "ymax": ymax,
+                    "w": box_width, "h": box_height,
+                    "aspect": aspect, "conf": confidence,
+                    "reject": reject_reason,
+                })
+
+                if reject_reason is not None:
                     continue
 
                 cx1 = max(0, int(xmin - box_width * 0.15))
@@ -584,6 +597,25 @@ def main():
             # ========================================================
             # 3) Debug overlay
             # ========================================================
+            # Raw COCO class-9 detections are drawn before our vehicle-signal
+            # filters so we can distinguish YOLO misses from filter rejection.
+            for raw_box in raw_signal_boxes:
+                if raw_box["reject"] is None:
+                    continue
+                rx1, ry1 = raw_box["xmin"], raw_box["ymin"]
+                rx2, ry2 = raw_box["xmax"], raw_box["ymax"]
+                cv2.rectangle(frame, (rx1, ry1), (rx2, ry2), (0, 255, 255), 2)
+                raw_text = (
+                    f"RAW TL {raw_box['conf']:.2f} "
+                    f"{raw_box['w']}x{raw_box['h']} "
+                    f"{raw_box['reject']}"
+                )
+                cv2.putText(
+                    frame, raw_text,
+                    (rx1, max(18, ry1 - 5)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 1
+                )
+
             if selected:
                 color = (0, 255, 0) if decision.startswith("GO") else (0, 0, 255)
                 if stable_label == "yellow":
@@ -598,6 +630,12 @@ def main():
                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
 
             cv2.rectangle(frame, (roi_left, roi_top), (roi_right, roi_bottom), (255, 180, 0), 1)
+            cv2.putText(
+                frame,
+                f"YOLO TL raw:{len(raw_signal_boxes)} accepted:{len(candidates)}",
+                (roi_left + 5, max(20, roi_top + 20)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 180, 0), 1
+            )
 
             sx1, sy1, sx2, sy2 = stop_roi
             cv2.rectangle(frame, (sx1, sy1), (sx2, sy2), (255, 0, 255), 1)
