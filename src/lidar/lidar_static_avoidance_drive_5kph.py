@@ -342,6 +342,8 @@ def main():
         "width", "length", "distance", "points",
         "x_min", "x_max", "y_min", "y_max", "z_min", "z_max",
         "candidate_diagnostics",
+        "track_id", "velocity_x_mps", "velocity_y_mps", "track_speed_mps",
+        "is_dynamic", "dynamic_count",
     ])
     log_handle.flush()
     print(f"[LOG] {log_file}")
@@ -530,9 +532,22 @@ def main():
                     x_min = x_max = y_min = y_max = z_min = z_max = float("nan")
                     point_count = 0
 
+                track_id = getattr(obstacle, "track_id", None)
+                velocity_x = float(getattr(obstacle, "velocity_x", 0.0))
+                velocity_y = float(getattr(obstacle, "velocity_y", 0.0))
+                track_speed = math.hypot(velocity_x, velocity_y)
+                is_dynamic = bool(getattr(obstacle, "is_dynamic", False))
+                dynamic_count = (
+                    tracker.dynamic_count.get(track_id, 0)
+                    if track_id is not None
+                    else 0
+                )
+
                 diagnostic_rows.append((
                     obstacle_id, obstacle, point_count,
                     x_min, x_max, y_min, y_max, z_min, z_max,
+                    track_id, velocity_x, velocity_y, track_speed,
+                    is_dynamic, dynamic_count,
                 ))
 
             candidate_diagnostics_text = ""
@@ -553,6 +568,8 @@ def main():
                 for (
                     obstacle_id, obstacle, point_count,
                     x_min, x_max, y_min, y_max, z_min, z_max,
+                    track_id, velocity_x, velocity_y, track_speed,
+                    is_dynamic, dynamic_count,
                 ) in diagnostic_rows:
                     log_writer.writerow([
                         scan_number, ego_x, ego_y, math.degrees(ego_yaw),
@@ -563,6 +580,8 @@ def main():
                         obstacle.distance, point_count,
                         x_min, x_max, y_min, y_max, z_min, z_max,
                         candidate_diagnostics_text,
+                        track_id, velocity_x, velocity_y, track_speed,
+                        is_dynamic, dynamic_count,
                     ])
             else:
                 log_writer.writerow([
@@ -573,6 +592,7 @@ def main():
                     "", "", "", "", "", "", 0,
                     "", "", "", "", "", "",
                     candidate_diagnostics_text,
+                    "", "", "", "", "", "",
                 ])
             log_handle.flush()
 
@@ -614,6 +634,8 @@ def main():
                 for (
                     obstacle_id, obstacle, point_count,
                     x_min, x_max, y_min, y_max, z_min, z_max,
+                    track_id, velocity_x, velocity_y, track_speed,
+                    is_dynamic, dynamic_count,
                 ) in diagnostic_rows:
                     print(
                         f"  ID={obstacle_id} "
@@ -629,6 +651,14 @@ def main():
                         f"x=[{x_min:.2f}, {x_max:.2f}] m, "
                         f"y=[{y_min:.2f}, {y_max:.2f}] m, "
                         f"z=[{z_min:.2f}, {z_max:.2f}] m"
+                    )
+                    print(
+                        f"       track={track_id}, "
+                        f"vx={velocity_x:+.2f} m/s, "
+                        f"vy={velocity_y:+.2f} m/s, "
+                        f"speed={track_speed:.2f} m/s, "
+                        f"dynamic={is_dynamic}, "
+                        f"confirm={dynamic_count}/{tracker.dynamic_confirm_frames}"
                     )
             print()
             print(f"PLANNER RAW   : {raw_plan_result.status}")
