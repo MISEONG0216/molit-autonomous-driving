@@ -514,9 +514,11 @@ def main():
                         x_max = float(np.max(cluster_points[:, 0]))
                         y_min = float(np.min(cluster_points[:, 1]))
                         y_max = float(np.max(cluster_points[:, 1]))
+                        z_min = float(np.min(cluster_points[:, 2]))
+                        z_max = float(np.max(cluster_points[:, 2]))
                         point_count = len(cluster_points)
                     else:
-                        x_min = x_max = y_min = y_max = float("nan")
+                        x_min = x_max = y_min = y_max = z_min = z_max = float("nan")
                         point_count = 0
 
                     print(
@@ -531,7 +533,8 @@ def main():
                     print(
                         f"       range: "
                         f"x=[{x_min:.2f}, {x_max:.2f}] m, "
-                        f"y=[{y_min:.2f}, {y_max:.2f}] m"
+                        f"y=[{y_min:.2f}, {y_max:.2f}] m, "
+                        f"z=[{z_min:.2f}, {z_max:.2f}] m"
                     )
             print()
             print(f"PLANNER RAW   : {raw_plan_result.status}")
