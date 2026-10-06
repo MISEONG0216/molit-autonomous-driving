@@ -72,7 +72,8 @@ def open_log():
         "elapsed_sec", "waypoint_index", "x_m", "y_m", "yaw_deg",
         "path_dist_m", "base_target_kmh", "final_target_kmh",
         "comp_speed_kmh", "steering_rad", "accel_cmd", "brake_cmd",
-        "traffic_state", "red_latched", "go_release_count",
+        "traffic_raw", "traffic_age_sec", "traffic_state",
+        "red_latched", "go_release_count",
         "merge_state", "merge_risk", "mission_reasons",
     ])
     return path, f, w
@@ -332,6 +333,11 @@ def main():
                 f"{steering:.6f}",
                 f"{accel_cmd:.4f}",
                 f"{brake_cmd:.4f}",
+                traffic.get("signal", "UNKNOWN"),
+                (
+                    f"{max(0.0, now - traffic_updated_at):.3f}"
+                    if traffic_updated_at > 0.0 else "inf"
+                ),
                 mission["traffic_state"],
                 int(mission["red_latched"]),
                 mission["go_release_count"],
@@ -365,8 +371,21 @@ def main():
                 f"CTRL ZONE   : {control_zone} / LONG={signed_cmd:+.3f}"
             )
             print()
+            traffic_age = (
+                now - traffic_updated_at
+                if traffic_updated_at > 0.0 else float("inf")
+            )
+            traffic_age_text = (
+                f"{traffic_age:.2f}s"
+                if math.isfinite(traffic_age) else "WAIT"
+            )
             print(
-                f"TRAFFIC     : {mission['traffic_state']} / "
+                f"TRAFFIC RAW : {traffic.get('signal', 'UNKNOWN')} / "
+                f"age={traffic_age_text} / "
+                f"line={traffic.get('stopline_y')}"
+            )
+            print(
+                f"TRAFFIC CTRL: {mission['traffic_state']} / "
                 f"RED={mission['red_latched']} / "
                 f"GO={mission['go_release_count']}"
             )
