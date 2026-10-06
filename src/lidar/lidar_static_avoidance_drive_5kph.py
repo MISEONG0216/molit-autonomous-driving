@@ -326,6 +326,7 @@ def main():
         "avoid_side", "path_source", "cluster_id", "object_x", "object_y",
         "width", "length", "distance", "points",
         "x_min", "x_max", "y_min", "y_max", "z_min", "z_max",
+        "candidate_diagnostics",
     ])
     log_handle.flush()
     print(f"[LOG] {log_file}")
@@ -519,6 +520,20 @@ def main():
                     x_min, x_max, y_min, y_max, z_min, z_max,
                 ))
 
+            candidate_diagnostics_text = ""
+            if raw_plan_result.candidate_diagnostics:
+                candidate_diagnostics_text = " | ".join(
+                    (
+                        f"offset={item['offset_m']:+.2f}:"
+                        f"{item['reason']}:"
+                        f"clear={item['min_clearance_m']:.2f}/"
+                        f"safe={item['safe_radius_m']:.2f}:"
+                        f"offsetmax={item['max_abs_offset_m']:.2f}/"
+                        f"limit={item['boundary_limit_m']:.2f}"
+                    )
+                    for item in raw_plan_result.candidate_diagnostics
+                )
+
             if diagnostic_rows:
                 for (
                     obstacle_id, obstacle, point_count,
@@ -532,6 +547,7 @@ def main():
                         obstacle.x, obstacle.y, obstacle.width, obstacle.length,
                         obstacle.distance, point_count,
                         x_min, x_max, y_min, y_max, z_min, z_max,
+                        candidate_diagnostics_text,
                     ])
             else:
                 log_writer.writerow([
@@ -541,6 +557,7 @@ def main():
                     plan_result.avoidance_side, path_source,
                     "", "", "", "", "", "", 0,
                     "", "", "", "", "", "",
+                    candidate_diagnostics_text,
                 ])
             log_handle.flush()
 
@@ -610,6 +627,17 @@ def main():
             print(f"AVOID SIDE    : {plan_result.avoidance_side}")
             print(f"PATH SOURCE   : {path_source}")
             print(f"PATH POINTS   : {len(selected_path)}")
+            if raw_plan_result.candidate_diagnostics:
+                print("[CANDIDATE CHECK]")
+                for item in raw_plan_result.candidate_diagnostics:
+                    print(
+                        f"  offset={item['offset_m']:+.2f} m "
+                        f"{item['reason']:<9} "
+                        f"clear={item['min_clearance_m']:.2f} / "
+                        f"safe={item['safe_radius_m']:.2f} m, "
+                        f"offset={item['max_abs_offset_m']:.2f} / "
+                        f"limit={item['boundary_limit_m']:.2f} m"
+                    )
             print(f"PLAN SPEED    : {plan_result.recommended_speed_kph:.1f} km/h")
             print(f"TEST LIMIT    : {test_speed_kph:.1f} km/h")
             print(f"TARGET SPEED  : {target_speed_kmh:.1f} km/h")
