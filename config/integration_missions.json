@@ -1,0 +1,19 @@
+{
+  "traffic": {
+    "signal_timeout_sec": 1.2,
+    "go_release_confirm_loops": 8,
+    "mission_start_offset": 25,
+    "slowdown_offset": 20,
+    "mission_end_offset": 15,
+    "approach_speed_kmh": 3.0
+  },
+  "merge": {
+    "result_timeout_sec": 0.8,
+    "zones": [],
+    "risk_speed_caps": [
+      {"min_risk": 0.80, "cap_kmh": 10.0},
+      {"min_risk": 0.60, "cap_kmh": 20.0},
+      {"min_risk": 0.40, "cap_kmh": 35.0}
+    ]
+  }
+}
