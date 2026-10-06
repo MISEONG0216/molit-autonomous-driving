@@ -109,9 +109,13 @@ class ObjectDetector:
         y_min = np.min(cluster_points[:, 1])
         y_max = np.max(cluster_points[:, 1])
 
+        z_min = np.min(cluster_points[:, 2])
+        z_max = np.max(cluster_points[:, 2])
+
 
         length = x_max - x_min
         width = y_max - y_min
+        height = z_max - z_min
 
 
         # ----------------------------------------------------
@@ -178,7 +182,8 @@ class ObjectDetector:
             is_dynamic=False,
 
             # ?꾩쭅 confidence ?뺤쓽 ????
-            confidence=0.0
+            confidence=0.0,
+            height=height
         )
 
         return obstacle
