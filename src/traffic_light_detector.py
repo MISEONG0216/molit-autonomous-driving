@@ -66,6 +66,7 @@ MIN_ASPECT_RATIO = 1.70
 MAX_ASPECT_RATIO = 6.50
 HISTORY_SIZE = 7
 MIN_STABLE_VOTES = 5
+STABLE_SIGNAL_HOLD_SEC = float(os.getenv("TRAFFIC_SIGNAL_HOLD_SEC", "0.60"))
 
 # ---------------- Universal stop-reference detector ----------------
 # The camera sees a zebra crossing as several long white "fingers" extending
@@ -400,6 +401,8 @@ def main():
 
     jpeg_buffer = b""
     signal_history = deque(maxlen=HISTORY_SIZE)
+    last_stable_label = "unknown"
+    last_stable_time = 0.0
     stopline_history = deque(maxlen=STOPLINE_HISTORY_SIZE)
     calibration_values = []
     last_reported = None
@@ -514,21 +517,45 @@ def main():
 
             selected = None
             votes = 0
+            now_signal = time.time()
+            voted_label = "unknown"
+
             if candidates:
-                selected = max(candidates, key=lambda item: candidate_score(item, width, height))
+                selected = max(
+                    candidates,
+                    key=lambda item: candidate_score(item, width, height),
+                )
                 signal_history.append(selected["label"])
-                stable_label, votes = Counter(signal_history).most_common(1)[0]
-                if votes < MIN_STABLE_VOTES:
+                voted_label, votes = Counter(signal_history).most_common(1)[0]
+
+                if votes >= MIN_STABLE_VOTES:
+                    stable_label = voted_label
+                    last_stable_label = stable_label
+                    last_stable_time = now_signal
+                elif (
+                    last_stable_label != "unknown"
+                    and now_signal - last_stable_time <= STABLE_SIGNAL_HOLD_SEC
+                ):
+                    # Short YOLO dropouts or a few transition frames should not
+                    # make a previously stable signal flicker to UNKNOWN.
+                    stable_label = last_stable_label
+                else:
                     stable_label = "unknown"
+
             else:
-                # Do not erase the full voting history because of one missed
-                # detector frame. Decay it gradually instead.
+                # Keep the original gradual history decay so a stale class does
+                # not dominate once detections resume.
                 if signal_history:
                     signal_history.popleft()
+
                 if signal_history:
-                    stable_label, votes = Counter(signal_history).most_common(1)[0]
-                    if votes < MIN_STABLE_VOTES:
-                        stable_label = "unknown"
+                    voted_label, votes = Counter(signal_history).most_common(1)[0]
+
+                if (
+                    last_stable_label != "unknown"
+                    and now_signal - last_stable_time <= STABLE_SIGNAL_HOLD_SEC
+                ):
+                    stable_label = last_stable_label
                 else:
                     stable_label = "unknown"
 
