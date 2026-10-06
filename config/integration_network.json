@@ -1,0 +1,8 @@
+{
+  "gps": {"bind_ip": "0.0.0.0", "port": 9201},
+  "imu": {"bind_ip": "0.0.0.0", "port": 1111},
+  "competition_status": {"bind_ip": "0.0.0.0", "port": 1909},
+  "control": {"target_ip": "192.168.203.252", "port": 9093},
+  "traffic_result": {"bind_ip": "0.0.0.0", "port": 9300},
+  "merge_result": {"bind_ip": "0.0.0.0", "port": 9301}
+}
