@@ -38,6 +38,17 @@ class DynamicObstacleResult:
     reason: str
 
 
+@dataclass
+class DynamicRiskState:
+    """Stateful #5 output after temporal confirmation/hysteresis."""
+    status: str
+    raw_result: DynamicObstacleResult
+    confirmed_obstacle_id: Optional[int]
+    risk_confirm_count: int
+    release_clear_count: int
+
+
+
 class DynamicObstaclePlanner:
     def __init__(
         self,
@@ -47,6 +58,8 @@ class DynamicObstaclePlanner:
         min_forward_m=0.0,
         max_forward_m=20.0,
         min_lateral_speed_mps=0.01,
+        risk_confirm_scans=3,
+        release_clear_scans=3,
     ):
         self.path_y_min = float(path_y_min)
         self.path_y_max = float(path_y_max)
@@ -54,6 +67,11 @@ class DynamicObstaclePlanner:
         self.min_forward_m = float(min_forward_m)
         self.max_forward_m = float(max_forward_m)
         self.min_lateral_speed_mps = float(min_lateral_speed_mps)
+        self.risk_confirm_scans = int(risk_confirm_scans)
+        self.release_clear_scans = int(release_clear_scans)
+        self._risk_count_by_track = {}
+        self._confirmed_risk_track = None
+        self._release_clear_count = 0
 
     def check_path(self, center_y):
         if self.path_y_min <= center_y <= self.path_y_max:
@@ -183,4 +201,71 @@ class DynamicObstaclePlanner:
                 if result.distance_m is None
                 else result.distance_m,
             ),
+        )
+
+
+    def reset_risk_state(self):
+        """Reset temporal #5 confirmation state."""
+        self._risk_count_by_track.clear()
+        self._confirmed_risk_track = None
+        self._release_clear_count = 0
+
+    def plan_confirmed(self, tracked_obstacles: Sequence):
+        """Run raw risk planning, then apply same-track confirmation/hysteresis.
+
+        Raw geometric/path-entry logic remains in plan().  This method owns the
+        temporal state needed by mission #5 so callers do not duplicate it.
+        """
+        raw_result = self.plan(tracked_obstacles)
+        raw_status = raw_result.status
+        current_risk_track = (
+            raw_result.obstacle_id if raw_status == "RISK" else None
+        )
+
+        if self._confirmed_risk_track is None:
+            self._release_clear_count = 0
+            if current_risk_track is None:
+                self._risk_count_by_track.clear()
+                current_risk_count = 0
+            else:
+                previous_count = self._risk_count_by_track.get(
+                    current_risk_track, 0
+                )
+                self._risk_count_by_track = {
+                    current_risk_track: previous_count + 1
+                }
+                current_risk_count = self._risk_count_by_track[
+                    current_risk_track
+                ]
+                if current_risk_count >= self.risk_confirm_scans:
+                    self._confirmed_risk_track = current_risk_track
+        else:
+            current_risk_count = self._risk_count_by_track.get(
+                self._confirmed_risk_track,
+                self.risk_confirm_scans,
+            )
+            if (
+                raw_status == "RISK"
+                and current_risk_track == self._confirmed_risk_track
+            ):
+                self._release_clear_count = 0
+            else:
+                self._release_clear_count += 1
+                if self._release_clear_count >= self.release_clear_scans:
+                    self._confirmed_risk_track = None
+                    self._release_clear_count = 0
+                    self._risk_count_by_track.clear()
+                    current_risk_count = 0
+
+        confirmed_status = (
+            "RISK_CONFIRMED"
+            if self._confirmed_risk_track is not None
+            else "CLEAR"
+        )
+        return DynamicRiskState(
+            status=confirmed_status,
+            raw_result=raw_result,
+            confirmed_obstacle_id=self._confirmed_risk_track,
+            risk_confirm_count=current_risk_count,
+            release_clear_count=self._release_clear_count,
         )
