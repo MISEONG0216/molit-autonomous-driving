@@ -45,6 +45,7 @@ class PlannerObstacle:
     velocity_y: float
     is_dynamic: bool
     confidence: float
+    height: float = 0.0
 
 
 def vehicle_to_global(
@@ -136,6 +137,7 @@ def tracked_to_planner_obstacle(
         velocity_y=float(tracked_obstacle.velocity_y),
         is_dynamic=bool(tracked_obstacle.is_dynamic),
         confidence=float(confidence),
+        height=float(getattr(tracked_obstacle, "height", 0.0)),
     )
 
 
