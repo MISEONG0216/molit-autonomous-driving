@@ -18,6 +18,7 @@ Safety:
 """
 
 import argparse
+import csv
 import math
 import sys
 import time
@@ -59,6 +60,7 @@ from lidar_ego_motion_test import (
 
 GLOBAL_PATH_FILE = PROJECT_ROOT / "path" / "2026_molit_comp_global_path.txt"
 STATIC_CONFIG_FILE = LIDAR_DIR / "static_obstacle_config.json"
+LOG_DIR = PROJECT_ROOT / "logs" / "lidar_static_avoidance"
 
 DEFAULT_TEST_SPEED_KPH = 5.0
 ALLOWED_TEST_SPEEDS_KPH = (5.0, 10.0, 15.0, 20.0, 25.0)
@@ -311,6 +313,22 @@ def main():
     previous_ego_pose = None
     previous_control_time = time.time()
     scan_number = 0
+    previous_raw_status = None
+
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    run_stamp = time.strftime("%Y%m%d_%H%M%S")
+    log_file = LOG_DIR / f"static_avoidance_{run_stamp}.csv"
+    log_handle = log_file.open("w", newline="", encoding="utf-8-sig")
+    log_writer = csv.writer(log_handle)
+    log_writer.writerow([
+        "scan", "ego_x", "ego_y", "ego_yaw_deg", "ego_speed_kmh",
+        "raw_status", "planner_status", "latch_state", "planner_obstacle_id",
+        "avoid_side", "path_source", "cluster_id", "object_x", "object_y",
+        "width", "length", "distance", "points",
+        "x_min", "x_max", "y_min", "y_max", "z_min", "z_max",
+    ])
+    log_handle.flush()
+    print(f"[LOG] {log_file}")
 
     try:
         lidar_receiver.start()
@@ -473,6 +491,66 @@ def main():
                     steering,
                 )
 
+            # Save every processed LiDAR scan so short-lived false avoidance
+            # events can be inspected after a full-course drive.
+            diagnostic_rows = []
+            for obstacle in obstacles:
+                obstacle_id = getattr(
+                    obstacle,
+                    "cluster_id",
+                    getattr(obstacle, "id", None),
+                )
+                cluster_mask = cluster_labels == obstacle_id
+                cluster_points = non_ground_points[cluster_mask]
+                if len(cluster_points) > 0:
+                    x_min = float(np.min(cluster_points[:, 0]))
+                    x_max = float(np.max(cluster_points[:, 0]))
+                    y_min = float(np.min(cluster_points[:, 1]))
+                    y_max = float(np.max(cluster_points[:, 1]))
+                    z_min = float(np.min(cluster_points[:, 2]))
+                    z_max = float(np.max(cluster_points[:, 2]))
+                    point_count = len(cluster_points)
+                else:
+                    x_min = x_max = y_min = y_max = z_min = z_max = float("nan")
+                    point_count = 0
+
+                diagnostic_rows.append((
+                    obstacle_id, obstacle, point_count,
+                    x_min, x_max, y_min, y_max, z_min, z_max,
+                ))
+
+            if diagnostic_rows:
+                for (
+                    obstacle_id, obstacle, point_count,
+                    x_min, x_max, y_min, y_max, z_min, z_max,
+                ) in diagnostic_rows:
+                    log_writer.writerow([
+                        scan_number, ego_x, ego_y, math.degrees(ego_yaw),
+                        current_speed_kmh, raw_plan_result.status,
+                        plan_result.status, latch_state, plan_result.obstacle_id,
+                        plan_result.avoidance_side, path_source, obstacle_id,
+                        obstacle.x, obstacle.y, obstacle.width, obstacle.length,
+                        obstacle.distance, point_count,
+                        x_min, x_max, y_min, y_max, z_min, z_max,
+                    ])
+            else:
+                log_writer.writerow([
+                    scan_number, ego_x, ego_y, math.degrees(ego_yaw),
+                    current_speed_kmh, raw_plan_result.status,
+                    plan_result.status, latch_state, plan_result.obstacle_id,
+                    plan_result.avoidance_side, path_source,
+                    "", "", "", "", "", "", 0,
+                    "", "", "", "", "", "",
+                ])
+            log_handle.flush()
+
+            if raw_plan_result.status != previous_raw_status:
+                print(
+                    f"[EVENT] RAW {previous_raw_status} -> "
+                    f"{raw_plan_result.status} at SCAN {scan_number}"
+                )
+                previous_raw_status = raw_plan_result.status
+
             print("\033[2J\033[H", end="")
             print("=" * 76)
             print(f" STATIC OBSTACLE AVOIDANCE + PURE PURSUIT - {test_speed_kph:.0f} km/h TEST")
@@ -501,26 +579,10 @@ def main():
             if len(obstacles) == 0:
                 print("  None")
             else:
-                for obstacle in obstacles:
-                    obstacle_id = getattr(
-                        obstacle,
-                        "cluster_id",
-                        getattr(obstacle, "id", None),
-                    )
-                    cluster_mask = cluster_labels == obstacle_id
-                    cluster_points = non_ground_points[cluster_mask]
-                    if len(cluster_points) > 0:
-                        x_min = float(np.min(cluster_points[:, 0]))
-                        x_max = float(np.max(cluster_points[:, 0]))
-                        y_min = float(np.min(cluster_points[:, 1]))
-                        y_max = float(np.max(cluster_points[:, 1]))
-                        z_min = float(np.min(cluster_points[:, 2]))
-                        z_max = float(np.max(cluster_points[:, 2]))
-                        point_count = len(cluster_points)
-                    else:
-                        x_min = x_max = y_min = y_max = z_min = z_max = float("nan")
-                        point_count = 0
-
+                for (
+                    obstacle_id, obstacle, point_count,
+                    x_min, x_max, y_min, y_max, z_min, z_max,
+                ) in diagnostic_rows:
                     print(
                         f"  ID={obstacle_id} "
                         f"x={obstacle.x:.2f} m, "
@@ -594,7 +656,9 @@ def main():
                 time.sleep(0.05)
     finally:
         lidar_receiver.stop()
+        log_handle.close()
         print("[STOP] LiDAR receiver stopped.")
+        print(f"[LOG] Saved: {log_file}")
 
 
 if __name__ == "__main__":
