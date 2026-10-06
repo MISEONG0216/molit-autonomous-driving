@@ -18,6 +18,7 @@ class Obstacle:
     velocity_y: float
     is_dynamic: bool
     confidence: float
+    height: float = 0.0
 
 
 @dataclass
@@ -107,6 +108,16 @@ class StaticObstaclePlanner:
             # here rather than in the shared detector.
             min_static_width = float(self.cfg.get("min_static_obstacle_width_m", 0.0))
             if obs.width < min_static_width:
+                continue
+
+            # Static-mission-only height filter. Road-surface clusters can look
+            # wide in XY but have only a few centimetres of vertical extent.
+            # Keep those detections/tracks alive for other missions, while #4
+            # ignores them as static avoidance targets.
+            min_static_height = float(
+                self.cfg.get("min_static_obstacle_height_m", 0.0)
+            )
+            if obs.height < min_static_height:
                 continue
 
             idx = nearest_index(self.path, obs.x, obs.y)
