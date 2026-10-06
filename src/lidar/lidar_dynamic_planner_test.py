@@ -102,6 +102,8 @@ def main():
         min_forward_m=0.0,
         max_forward_m=20.0,
         min_lateral_speed_mps=0.01,
+        risk_confirm_scans=RISK_CONFIRM_SCANS,
+        release_clear_scans=RISK_RELEASE_CLEAR_SCANS,
     )
 
     previous_scan_timestamp = None
@@ -110,9 +112,6 @@ def main():
     scan_number = 0
     previous_raw_status = None
     previous_confirmed_status = None
-    risk_count_by_track = {}
-    confirmed_risk_track = None
-    release_clear_count = 0
 
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     run_stamp = time.strftime("%Y%m%d_%H%M%S")
@@ -208,73 +207,13 @@ def main():
                 delta_yaw=delta_yaw,
             )
 
-            final_result = dynamic_planner.plan(tracked_obstacles)
+            risk_state = dynamic_planner.plan_confirmed(tracked_obstacles)
+            final_result = risk_state.raw_result
             raw_status = final_result.status
-
-            # Stateful risk confirmation with hysteresis.
-            # 1) A candidate must be RISK for N consecutive scans on the same track.
-            # 2) Once confirmed, one noisy CLEAR scan does not immediately release it.
-            # 3) Release only after M consecutive CLEAR scans.
-            current_risk_track = (
-                final_result.obstacle_id
-                if raw_status == "RISK"
-                else None
-            )
-
-            if confirmed_risk_track is None:
-                release_clear_count = 0
-
-                if current_risk_track is None:
-                    risk_count_by_track.clear()
-                    current_risk_count = 0
-                else:
-                    previous_count = risk_count_by_track.get(current_risk_track, 0)
-                    risk_count_by_track = {
-                        current_risk_track: previous_count + 1
-                    }
-                    current_risk_count = risk_count_by_track[current_risk_track]
-
-                    if current_risk_count >= RISK_CONFIRM_SCANS:
-                        confirmed_risk_track = current_risk_track
-                        release_clear_count = 0
-
-                confirmed_status = (
-                    "RISK_CONFIRMED"
-                    if confirmed_risk_track is not None
-                    else "CLEAR"
-                )
-            else:
-                # Keep the confirmed state if the same track remains risky.
-                if (
-                    raw_status == "RISK"
-                    and current_risk_track == confirmed_risk_track
-                ):
-                    release_clear_count = 0
-                    current_risk_count = risk_count_by_track.get(
-                        confirmed_risk_track,
-                        RISK_CONFIRM_SCANS,
-                    )
-                else:
-                    # Any non-matching raw result is treated as a release
-                    # candidate.  This prevents a single noisy frame from
-                    # immediately dropping the confirmed risk.
-                    release_clear_count += 1
-                    current_risk_count = risk_count_by_track.get(
-                        confirmed_risk_track,
-                        RISK_CONFIRM_SCANS,
-                    )
-
-                    if release_clear_count >= RISK_RELEASE_CLEAR_SCANS:
-                        confirmed_risk_track = None
-                        release_clear_count = 0
-                        risk_count_by_track.clear()
-                        current_risk_count = 0
-
-                confirmed_status = (
-                    "RISK_CONFIRMED"
-                    if confirmed_risk_track is not None
-                    else "CLEAR"
-                )
+            confirmed_status = risk_state.status
+            current_risk_count = risk_state.risk_confirm_count
+            confirmed_risk_track = risk_state.confirmed_obstacle_id
+            release_clear_count = risk_state.release_clear_count
 
             if raw_status != previous_raw_status:
                 print(
@@ -406,9 +345,12 @@ def main():
                     "", "", "", "", "", "", "", "",
                     False, 0,
                     "", "", "", "", "", "",
+                    "",
                     raw_status,
                     confirmed_status,
-                    consecutive_risk_scans,
+                    current_risk_count,
+                    confirmed_risk_track,
+                    release_clear_count,
                     final_result.obstacle_id,
                     final_result.reason,
                 ])
