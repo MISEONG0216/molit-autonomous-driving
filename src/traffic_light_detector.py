@@ -54,6 +54,7 @@ CAMERA_PORT = int(os.getenv("TRAFFIC_CAMERA_PORT", "9291"))
 DECISION_IP = os.getenv("TRAFFIC_DECISION_IP", "127.0.0.1")
 DECISION_PORT = int(os.getenv("TRAFFIC_DECISION_PORT", "9300"))
 MAX_DGRAM = 65535
+WINDOW_NAME = "MORAI Vehicle Signal + Stop Line"
 
 # ---------------- Vehicle traffic-light detector ----------------
 CLASS_NAMES = ["red", "yellow", "green", "greenleft", "redleft"]
@@ -403,6 +404,14 @@ def main():
     calibration_values = []
     last_reported = None
     last_stopline_report = None
+    first_frame_reported = False
+
+    # Create the debug window explicitly on Ubuntu/Linux.  Calling imshow()
+    # alone can leave the auto-created Qt window hidden or placed awkwardly.
+    cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(WINDOW_NAME, 960, 540)
+    cv2.moveWindow(WINDOW_NAME, 60, 60)
+    print(f"[GUI] debug window ready: {WINDOW_NAME}")
 
     try:
         while True:
@@ -439,6 +448,9 @@ def main():
                 continue
 
             height, width, _ = frame.shape
+            if not first_frame_reported:
+                print(f"[CAMERA] decoded frame {width}x{height}")
+                first_frame_reported = True
 
             # ========================================================
             # 1) Vehicle signal detection
@@ -625,7 +637,7 @@ def main():
                         (30, height - 25), cv2.FONT_HERSHEY_SIMPLEX, 0.65,
                         (0, 255, 255), 2)
 
-            cv2.imshow("MORAI Vehicle Signal + Stop Line", frame)
+            cv2.imshow(WINDOW_NAME, frame)
             if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
                 break
 
