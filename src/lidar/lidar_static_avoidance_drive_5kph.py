@@ -135,12 +135,23 @@ class AvoidancePathLatch:
         local_xy = prepare_path(self.path)
         nearest = pp_base.find_nearest_waypoint(local_xy, ego_x, ego_y)
 
-        # Safety has priority over latch persistence.
-        # A fresh STOP_REQUIRED result must never be hidden by an old
-        # avoidance path.
+        # Safety still has priority for a different/new obstacle.
+        # However, once an avoidance path has already been accepted and
+        # latched, replanning the SAME tracked obstacle from a much closer
+        # ego position can make every newly generated candidate look unsafe.
+        # In that specific case, keep following the previously accepted path
+        # instead of throwing it away and braking in front of the same box.
         if raw_plan_result.status == "STOP_REQUIRED":
-            self._reset()
-            return raw_plan_result, "STOP_REQUIRED_OVERRIDE"
+            same_obstacle = (
+                self.obstacle_id is not None
+                and raw_plan_result.obstacle_id is not None
+                and raw_plan_result.obstacle_id == self.obstacle_id
+            )
+            if not same_obstacle:
+                self._reset()
+                return raw_plan_result, "STOP_REQUIRED_NEW_OBSTACLE"
+
+            self.clear_count = 0
 
         # During an active avoidance manoeuvre, require CLEAR to be observed
         # for 10 consecutive processed LiDAR scans before returning to the
@@ -170,6 +181,10 @@ class AvoidancePathLatch:
             8.0,
             "Latched avoidance path held until 10 consecutive CLEAR scans or path release",
         )
+        if raw_plan_result.status == "STOP_REQUIRED":
+            return latched, (
+                f"LATCHED_SAME_OBSTACLE_STOP {nearest}/{self.release_index}"
+            )
         return latched, f"LATCHED {nearest}/{self.release_index}"
 
 
