@@ -46,6 +46,7 @@ from lidar_ego_motion_test import (
 
 LOG_DIR = PROJECT_ROOT / "logs" / "lidar_dynamic_planner"
 RISK_CONFIRM_SCANS = 3
+RISK_RELEASE_CLEAR_SCANS = 3
 MIN_EGO_SPEED_FOR_TTC_MPS = 0.3
 
 
@@ -62,6 +63,7 @@ def main():
     print("[MODE] DRY-RUN ONLY - EgoCtrlCmd is NOT transmitted")
     print("[RISK] dynamic + IN_PATH, or predicted path entry within 5.0 s")
     print(f"[CONFIRM] RISK must persist for {RISK_CONFIRM_SCANS} consecutive scans")
+    print(f"[RELEASE] Confirmed risk clears after {RISK_RELEASE_CLEAR_SCANS} consecutive CLEAR scans")
     print("[TTC] Logging object path-entry time vs ego arrival time (diagnostic only)")
     print()
 
@@ -109,6 +111,8 @@ def main():
     previous_raw_status = None
     previous_confirmed_status = None
     risk_count_by_track = {}
+    confirmed_risk_track = None
+    release_clear_count = 0
 
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     run_stamp = time.strftime("%Y%m%d_%H%M%S")
@@ -126,6 +130,7 @@ def main():
         "predicted_cross_x_m", "ego_time_to_cross_s", "time_gap_s",
         "object_result",
         "raw_final_status", "confirmed_status", "risk_confirm_count",
+        "confirmed_risk_track", "release_clear_count",
         "final_obstacle_id", "final_reason",
     ])
     log_handle.flush()
@@ -206,32 +211,70 @@ def main():
             final_result = dynamic_planner.plan(tracked_obstacles)
             raw_status = final_result.status
 
-            # Confirm risk per persistent track ID.  A risk from one object
-            # must not continue the counter of another object.
+            # Stateful risk confirmation with hysteresis.
+            # 1) A candidate must be RISK for N consecutive scans on the same track.
+            # 2) Once confirmed, one noisy CLEAR scan does not immediately release it.
+            # 3) Release only after M consecutive CLEAR scans.
             current_risk_track = (
                 final_result.obstacle_id
                 if raw_status == "RISK"
                 else None
             )
 
-            if current_risk_track is None:
-                risk_count_by_track.clear()
-                current_risk_count = 0
-            else:
-                previous_count = risk_count_by_track.get(current_risk_track, 0)
-                risk_count_by_track = {
-                    current_risk_track: previous_count + 1
-                }
-                current_risk_count = risk_count_by_track[current_risk_track]
+            if confirmed_risk_track is None:
+                release_clear_count = 0
 
-            confirmed_status = (
-                "RISK_CONFIRMED"
-                if (
-                    current_risk_track is not None
-                    and current_risk_count >= RISK_CONFIRM_SCANS
+                if current_risk_track is None:
+                    risk_count_by_track.clear()
+                    current_risk_count = 0
+                else:
+                    previous_count = risk_count_by_track.get(current_risk_track, 0)
+                    risk_count_by_track = {
+                        current_risk_track: previous_count + 1
+                    }
+                    current_risk_count = risk_count_by_track[current_risk_track]
+
+                    if current_risk_count >= RISK_CONFIRM_SCANS:
+                        confirmed_risk_track = current_risk_track
+                        release_clear_count = 0
+
+                confirmed_status = (
+                    "RISK_CONFIRMED"
+                    if confirmed_risk_track is not None
+                    else "CLEAR"
                 )
-                else "CLEAR"
-            )
+            else:
+                # Keep the confirmed state if the same track remains risky.
+                if (
+                    raw_status == "RISK"
+                    and current_risk_track == confirmed_risk_track
+                ):
+                    release_clear_count = 0
+                    current_risk_count = risk_count_by_track.get(
+                        confirmed_risk_track,
+                        RISK_CONFIRM_SCANS,
+                    )
+                else:
+                    # Any non-matching raw result is treated as a release
+                    # candidate.  This prevents a single noisy frame from
+                    # immediately dropping the confirmed risk.
+                    release_clear_count += 1
+                    current_risk_count = risk_count_by_track.get(
+                        confirmed_risk_track,
+                        RISK_CONFIRM_SCANS,
+                    )
+
+                    if release_clear_count >= RISK_RELEASE_CLEAR_SCANS:
+                        confirmed_risk_track = None
+                        release_clear_count = 0
+                        risk_count_by_track.clear()
+                        current_risk_count = 0
+
+                confirmed_status = (
+                    "RISK_CONFIRMED"
+                    if confirmed_risk_track is not None
+                    else "CLEAR"
+                )
 
             if raw_status != previous_raw_status:
                 print(
@@ -254,7 +297,9 @@ def main():
                 f"=> RAW={raw_status} "
                 f"confirm={current_risk_count}/{RISK_CONFIRM_SCANS} "
                 f"=> {confirmed_status} "
-                f"track={final_result.obstacle_id} "
+                f"confirmed_track={confirmed_risk_track} "
+                f"release={release_clear_count}/{RISK_RELEASE_CLEAR_SCANS} "
+                f"raw_track={final_result.obstacle_id} "
                 f"time_to_path={fmt(final_result.time_to_path_s)} s"
             )
 
@@ -346,6 +391,8 @@ def main():
                     raw_status,
                     confirmed_status,
                     current_risk_count,
+                    confirmed_risk_track,
+                    release_clear_count,
                     final_result.obstacle_id,
                     final_result.reason,
                 ])
