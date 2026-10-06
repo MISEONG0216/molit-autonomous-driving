@@ -28,7 +28,8 @@ class Obstacle:
         velocity_x=0.0,
         velocity_y=0.0,
         is_dynamic=False,
-        confidence=0.0
+        confidence=0.0,
+        height=0.0
     ):
         # Object Detection에서 생성
         self.cluster_id = cluster_id
@@ -50,6 +51,7 @@ class Obstacle:
         self.is_dynamic = is_dynamic
 
         self.confidence = confidence
+        self.height = height
 
 
     def __repr__(self):
@@ -65,6 +67,7 @@ class Obstacle:
             f"velocity_x={self.velocity_x:.2f}, "
             f"velocity_y={self.velocity_y:.2f}, "
             f"is_dynamic={self.is_dynamic}, "
-            f"confidence={self.confidence:.2f}"
+            f"confidence={self.confidence:.2f}, "
+            f"height={self.height:.2f}"
             f")"
         )
