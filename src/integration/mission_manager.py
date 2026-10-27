@@ -85,9 +85,13 @@ class MissionManager:
             # With a loaded path, ignore traffic lights outside the upcoming
             # intersection's approach zone. Without a path, retain V8 test
             # compatibility (the main integration always supplies a path).
-            approach_m = float(
-                self.traffic_cfg.get("approach_distance_m", 60.0)
+            override = self.traffic_cfg.get("stop_overrides", {}).get(
+                str(active_stop), {}
             )
+            approach_m = float(override.get(
+                "approach_distance_m",
+                self.traffic_cfg.get("approach_distance_m", 60.0),
+            ))
             in_approach = (
                 self.path_s is None
                 or (
@@ -183,25 +187,43 @@ class MissionManager:
                 full_brake = True
                 traffic_state = "FULL_BRAKE_RED"
                 reasons.append("traffic_full_brake")
-            elif stop_distance_m is not None and stop_distance_m <= float(
-                self.traffic_cfg.get("approach_distance_m", 60.0)
-            ):
-                traffic_approach = True
-                target_speed = min(
-                    target_speed,
-                    float(self.traffic_cfg.get("approach_speed_kmh", 30.0))
+            elif stop_distance_m is not None:
+                override = self.traffic_cfg.get("stop_overrides", {}).get(
+                    str(active_stop), {}
                 )
-                if not fresh:
+                approach_m = float(override.get(
+                    "approach_distance_m",
+                    self.traffic_cfg.get("approach_distance_m", 60.0),
+                ))
+                approach_cap = float(override.get(
+                    "approach_speed_kmh",
+                    self.traffic_cfg.get("approach_speed_kmh", 30.0),
+                ))
+                near_m = override.get("near_distance_m")
+                near_cap = override.get("near_speed_kmh")
+                if stop_distance_m <= approach_m:
+                    traffic_approach = True
+                    target_speed = min(target_speed, approach_cap)
+                    if (
+                        near_m is not None and near_cap is not None
+                        and stop_distance_m <= float(near_m)
+                    ):
+                        target_speed = min(target_speed, float(near_cap))
+                else:
+                    # Outside the configured approach, preserve V7 speed.
+                    approach_cap = None
+
+                if not traffic_approach:
+                    traffic_state = "VISION_WAIT" if not fresh else self.signal
+                elif not fresh:
                     traffic_state = f"APPROACH_VISION_WAIT_{active_stop}"
                 elif is_green:
                     traffic_state = f"APPROACH_GO_{active_stop}"
                 else:
                     traffic_state = f"APPROACH_{active_stop}"
-                reasons.append("traffic_approach")
-            elif not fresh:
-                traffic_state = "VISION_WAIT"
-            else:
-                traffic_state = self.signal
+                if traffic_approach:
+                    reasons.append("traffic_approach")
+
 
         merge_state = "OFF"
         merge_risk = 0.0
