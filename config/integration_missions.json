@@ -6,7 +6,15 @@
     "approach_speed_kmh": 30,
     "approach_brake_min_cmd": 0.14,
     "approach_brake_gain": 0.028,
-    "approach_brake_max_cmd": 0.5
+    "approach_brake_max_cmd": 0.5,
+    "stop_overrides": {
+      "620": {
+        "approach_distance_m": 100,
+        "approach_speed_kmh": 25,
+        "near_distance_m": 35,
+        "near_speed_kmh": 10
+      }
+    }
   },
   "merge": {
     "result_timeout_sec": 0.8,
