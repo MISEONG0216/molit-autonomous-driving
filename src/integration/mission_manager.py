@@ -118,7 +118,7 @@ class MissionManager:
                         self.completed_stop_indices.add(completed_stop)
                     self.red_latched = False
                     self.hold_stop_index = None
-                                self.go_release_count = 0
+                    self.go_release_count = 0
                     self._last_go_counted_update = 0.0
             elif not holding:
                 self.go_release_count = 0
