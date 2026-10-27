@@ -24,6 +24,7 @@ from lib.define.EgoCtrlCmd import EgoCtrlCmd
 from lib.define.EgoVehicleStatus import EgoVehicleStatus
 
 from lidar_receiver import MoraiLidarReceiver
+import pure_pursuit_regulation as speed_control
 
 from tunnel_avoidance import (
     TunnelAvoidancePlanner,
@@ -344,45 +345,40 @@ def calculate_pure_pursuit(
 
 def send_drive_command(
     sender,
-    speed_kmh,
+    accel_cmd,
+    brake_cmd,
     steer_deg,
 ):
+    # cmd_type=1: explicit throttle/brake/steering inputs.
+    # Keep the steering representation used by the validated main controller.
     steer_deg = max(
         -MAX_STEER_DEG,
-        min(
-            MAX_STEER_DEG,
-            steer_deg,
-        ),
+        min(MAX_STEER_DEG, steer_deg),
     )
 
     cmd = EgoCtrlCmd()
-
     cmd.ctrl_mode = 2
     cmd.gear = 4
-    cmd.cmd_type = 2
+    cmd.cmd_type = 1
 
-    cmd.velocity = float(
-        speed_kmh
-    )
-
-    cmd.steer = math.radians(
-        steer_deg
-    )
+    cmd.accel = max(0.0, min(1.0, float(accel_cmd)))
+    cmd.brake = max(0.0, min(1.0, float(brake_cmd)))
+    cmd.steer = max(-1.0, min(1.0, math.radians(steer_deg)))
 
     sender.send(cmd)
 
 
 def send_stop(sender):
+    # Always stop through cmd_type=1, including on Ctrl+C or exceptions.
     cmd = EgoCtrlCmd()
-
     cmd.ctrl_mode = 2
     cmd.gear = 4
-    cmd.cmd_type = 2
-
-    cmd.velocity = 0.0
+    cmd.cmd_type = 1
+    cmd.accel = 0.0
+    cmd.brake = 1.0
     cmd.steer = 0.0
 
-    print("[STOP] 정지 명령 송신")
+    print("[STOP] cmd_type=1 / accel=0.0 / brake=1.0")
 
     for _ in range(15):
         sender.send(cmd)
@@ -523,13 +519,20 @@ def main():
         MoraiLidarReceiver()
     )
 
-    sender = Sender(
-        CTRL_IP,
-        CTRL_PORT,
+    sender = (
+        Sender(CTRL_IP, CTRL_PORT)
+        if drive_enabled
+        else None
     )
 
     planner = (
         TunnelAvoidancePlanner()
+    )
+
+    # Reuse the validated main-controller throttle/brake policy and
+    # longitudinal command slew-rate limiter.
+    command_limiter = speed_control.LongitudinalCommandLimiter(
+        speed_control.LONGITUDINAL_CMD_RATE_PER_SEC
     )
 
     wait_start = time.monotonic()
@@ -996,8 +999,41 @@ def main():
                     CRAWL_SPEED_KMH,
                 )
 
+            # Convert km/h target + Competition Status speed to
+            # cmd_type=1 accelerator and brake pedal commands.
+            (
+                desired_accel,
+                desired_brake,
+                speed_error,
+                speed_zone,
+            ) = speed_control.longitudinal_policy(
+                target_speed_kmh,
+                actual_speed_kmh,
+            )
+
+            # The baseline controller coasts up to 2 km/h above target.
+            # In the 1.5-3 km/h tunnel avoidance stage, brake earlier.
+            if speed_error < -0.25:
+                desired_accel = 0.0
+                desired_brake = max(
+                    desired_brake,
+                    min(0.12, 0.08 * (-speed_error)),
+                )
+                speed_zone = "TUNNEL_BRAKE"
+
+            accel_cmd, brake_cmd, _ = command_limiter.update(
+                desired_accel,
+                desired_brake,
+                max(dt, 1e-3),
+            )
+
             control_state = "READY"
             send_allowed = True
+
+            # Never continue blind if no LiDAR scan is received.
+            if raw_count == 0:
+                control_state = "LIDAR_SAFETY"
+                send_allowed = False
 
             # 핵심 수정:
             # 회피 중에는 yaw 차이가 커질 수 있으므로
@@ -1067,26 +1103,32 @@ def main():
                 f" | send={drive_enabled and send_allowed}"
             )
 
+            print(
+                f"[LONGITUDINAL] "
+                f"zone={speed_zone}"
+                f" | error={speed_error:+.2f} km/h"
+                f" | accel={accel_cmd:.3f}"
+                f" | brake={brake_cmd:.3f}"
+                f" | cmd_type=1"
+            )
+
             print("-" * 95)
 
-            if (
-                drive_enabled
-                and send_allowed
-            ):
+            if not send_allowed:
+                command_limiter.reset()
+                if drive_enabled:
+                    send_drive_command(
+                        sender,
+                        0.0,
+                        1.0,
+                        0.0,
+                    )
+            elif drive_enabled:
                 send_drive_command(
                     sender,
-                    target_speed_kmh,
+                    accel_cmd,
+                    brake_cmd,
                     steer_deg,
-                )
-
-            elif (
-                drive_enabled
-                and not send_allowed
-            ):
-                send_drive_command(
-                    sender,
-                    0.0,
-                    0.0,
                 )
 
             elapsed = (
@@ -1108,8 +1150,11 @@ def main():
         print()
         print("[STOP] Ctrl+C")
 
-        if drive_enabled:
+    finally:
+        # Send braking commands on both normal Ctrl+C and errors.
+        if drive_enabled and sender is not None:
             send_stop(sender)
+        lidar_receiver.close()
 
 
 if __name__ == "__main__":
