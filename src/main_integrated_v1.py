@@ -5,7 +5,7 @@
 
 Base controller: the exact V7 import chain already validated on MORAI.
 Missions:
-- traffic-light result constrains target speed / holds stop using validated GPS indices
+- traffic-light STOP triggers immediate full-brake; confirmed GO releases it
 - highway merge risk optionally caps speed; it never changes the global path or steering
 
 Only this process sends EgoCtrlCmd.
@@ -185,6 +185,8 @@ def main():
     print("[CTRL] single EgoCtrlCmd sender / ctrl_mode=2 / cmd_type=1")
     print(f"[MODE] {'DRIVE' if args.drive else 'DRY-RUN'}")
     print(f"[TRAFFIC] {'ON' if args.traffic else 'OFF'} / stops={stop_indices}")
+    if args.traffic:
+        print("[TRAFFIC BRAKE] RED=accel 0.0 / brake 1.0 (limiter bypass)")
     print(
         f"[MERGE] {'ON' if args.merge else 'OFF'} / "
         f"control={'ON' if args.merge_control else 'OBSERVE'}"
@@ -313,11 +315,19 @@ def main():
             dt_control = max(1e-3, now - prev_control_time)
             prev_control_time = now
 
-            accel_cmd, brake_cmd, signed_cmd = command_limiter.update(
-                desired_accel,
-                desired_brake,
-                dt_control,
-            )
+            if args.traffic and mission["red_latched"]:
+                # Immediate RED stop: do not ramp down the previous throttle
+                # or cap the brake at the V7 cruise/curve-control limit.
+                command_limiter.reset()
+                accel_cmd, brake_cmd, signed_cmd = 0.0, 1.0, -1.0
+                control_zone = "TRAFFIC_FULL_BRAKE"
+            else:
+                # Starts from zero after GREEN release; no stale throttle.
+                accel_cmd, brake_cmd, signed_cmd = command_limiter.update(
+                    desired_accel,
+                    desired_brake,
+                    dt_control,
+                )
 
             elapsed = now - run_start
             log_writer.writerow([
