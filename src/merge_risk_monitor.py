@@ -181,7 +181,7 @@ def main():
     parser.add_argument("--rear-port", type=int, default=1118)
     parser.add_argument("--result-ip", default="127.0.0.1")
     parser.add_argument("--result-port", type=int, default=9301)
-    parser.add_argument("--stale-sec", type=float, default=1.2)
+    parser.add_argument("--stale-sec", type=float, default=3.0)
     parser.add_argument("--no-gui", action="store_true")
     args = parser.parse_args()
     if args.side_port == args.rear_port:
@@ -205,6 +205,8 @@ def main():
         f"-> {args.result_ip}:{args.result_port}"
     )
     last_send = 0.0
+    processed_side_at = 0.0
+    processed_rear_at = 0.0
     try:
         while True:
             side.poll()
@@ -219,7 +221,15 @@ def main():
                 and now - rear.last_frame_at <= args.stale_sec
             )
             frames = []
-            if fresh_side and fresh_rear:
+            # Do not call a stale/repeated frame a fresh safe observation.
+            # Both cameras must supply frames not processed previously.
+            has_new_pair = (
+                side.last_frame_at > processed_side_at
+                and rear.last_frame_at > processed_rear_at
+            )
+            if fresh_side and fresh_rear and has_new_pair:
+                processed_side_at = side.last_frame_at
+                processed_rear_at = rear.last_frame_at
                 try:
                     risk_l, view_l = analyzer.analyze(side.last_frame, "SIDE")
                     risk_r, view_r = analyzer.analyze(rear.last_frame, "REAR")
