@@ -255,7 +255,56 @@ class MissionManager:
 
             # Limit speed near each traffic light, regardless of its colour.
             # Only a confirmed STOP triggers full braking; UNKNOWN alone does not.
-            if self.red_latched:
+            stop_override = self.traffic_cfg.get("stop_overrides", {}).get(
+                str(active_stop), {}
+            )
+            # First-light only: red is latched early, but controlled braking
+            # continues toward a configurable stop point. Full brake is only
+            # applied near that point, keeping the light in camera view.
+            # Other intersections retain the validated V12 behaviour.
+            staged_red = (
+                self.red_latched
+                and stop_distance_m is not None
+                and "red_stop_offset_m" in stop_override
+                and active_stop == self.hold_stop_index
+            )
+            if staged_red:
+                stop_offset = float(stop_override["red_stop_offset_m"])
+                if stop_distance_m <= stop_offset:
+                    target_speed = 0.0
+                    full_brake = True
+                    traffic_state = "FULL_BRAKE_RED"
+                    reasons.append("traffic_full_brake")
+                else:
+                    traffic_approach = True
+                    target_speed = min(
+                        target_speed,
+                        float(stop_override.get("approach_speed_kmh", 30.0))
+                    )
+                    if stop_distance_m <= float(
+                        stop_override.get("red_slow_start_m", 45.0)
+                    ):
+                        target_speed = min(
+                            target_speed,
+                            float(stop_override.get("red_slow_speed_kmh", 20.0))
+                        )
+                    if stop_distance_m <= float(
+                        stop_override.get("red_near_distance_m", 20.0)
+                    ):
+                        target_speed = min(
+                            target_speed,
+                            float(stop_override.get("red_near_speed_kmh", 9.0))
+                        )
+                    if stop_distance_m <= float(
+                        stop_override.get("red_final_distance_m", 12.0)
+                    ):
+                        target_speed = min(
+                            target_speed,
+                            float(stop_override.get("red_final_speed_kmh", 5.0))
+                        )
+                    traffic_state = f"RED_STAGED_APPROACH_{active_stop}"
+                    reasons.append("traffic_red_staged_approach")
+            elif self.red_latched:
                 target_speed = 0.0
                 full_brake = True
                 traffic_state = "FULL_BRAKE_RED"
