@@ -33,6 +33,7 @@ from integration.mission_io import (
     parse_traffic_message,
 )
 from integration.mission_manager import MissionManager
+from integration.latest_gps import LatestGpsReceiver
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -106,10 +107,13 @@ def main():
         help="test only: treat the whole path as merge zone",
     )
     parser.add_argument("--max-speed", type=float, default=57.0)
+    parser.add_argument("--gps-timeout", type=float, default=0.75)
     args = parser.parse_args()
 
     if args.merge_control and not args.merge:
         parser.error("--merge-control requires --merge")
+    if args.gps_timeout <= 0:
+        parser.error("--gps-timeout must be positive")
     if args.max_speed <= 0.0 or args.max_speed > 57.0:
         parser.error("--max-speed must be >0 and <=57")
 
@@ -123,10 +127,9 @@ def main():
         profile_test.build_test_profile(global_path, args.max_speed)
     )
 
-    gps_receiver = Receiver(
+    gps_receiver = LatestGpsReceiver(
         network["gps"]["bind_ip"],
         int(network["gps"]["port"]),
-        GPS(),
     )
     imu_receiver = Receiver(
         network["imu"]["bind_ip"],
@@ -227,10 +230,22 @@ def main():
                     merge = parse_merge_message(raw)
                     merge_updated_at = updated_at
 
-            gps_data = gps_receiver.get_data()
-            gps_data.parsing()
-            lat = gps_data.gprmc.lat
-            lon = gps_data.gprmc.lon
+            gps_fix, gps_age, gps_packets = gps_receiver.read()
+            if gps_fix is None or gps_age > args.gps_timeout:
+                command_limiter.reset()
+                print(f"[GPS FAILSAFE] age={gps_age:.2f}s packets={gps_packets}; accel=0 brake=1", flush=True)
+                if ctrl_sender is not None:
+                    safe_cmd = EgoCtrlCmd()
+                    safe_cmd.ctrl_mode = 2
+                    safe_cmd.gear = 4
+                    safe_cmd.cmd_type = 1
+                    safe_cmd.accel = 0.0
+                    safe_cmd.brake = 1.0
+                    safe_cmd.steer = 0.0
+                    ctrl_sender.send(safe_cmd)
+                time.sleep(min(period, 0.1))
+                continue
+            lat, lon = gps_fix
             position = base.gps_to_local(lat, lon)
             if position is None:
                 print("[WAIT] GPS")
@@ -406,7 +421,7 @@ def main():
             print("====================================================")
             print(" V7 + TRAFFIC + MERGE INTEGRATION V1")
             print("====================================================")
-            print(f"GPS         : {lat:.6f}, {lon:.6f}")
+            print(f"GPS         : {lat:.6f}, {lon:.6f} / age={gps_age:.3f}s / RMC={gps_packets}")
             print(
                 f"POSITION    : x={current_x:.3f}, y={current_y:.3f}"
             )
@@ -489,6 +504,7 @@ def main():
             base.send_stop(ctrl_sender)
 
     finally:
+        gps_receiver.close()
         if traffic_rx is not None:
             traffic_rx.close()
         if merge_rx is not None:
