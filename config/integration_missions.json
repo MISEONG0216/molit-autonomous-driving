@@ -13,10 +13,22 @@
         "approach_speed_kmh": 25,
         "near_distance_m": 35,
         "near_speed_kmh": 10
+      },
+      "1224": {
+        "approach_distance_m": 100,
+        "approach_speed_kmh": 20,
+        "near_distance_m": 30,
+        "near_speed_kmh": 8
       }
     },
     "left_turn_stops": [
+      1224
+    ],
+    "ignore_signal_stops": [
       1104
+    ],
+    "left_only_stops": [
+      1224
     ]
   },
   "merge": {
