@@ -66,6 +66,8 @@ MIN_ASPECT_RATIO = 1.70
 MAX_ASPECT_RATIO = 6.50
 HISTORY_SIZE = 7
 MIN_STABLE_VOTES = 5
+# Independent stable left-arrow evidence: 5 of the last 7 processed frames.
+LEFT_ARROW_MIN_VOTES = 5
 STABLE_SIGNAL_HOLD_SEC = float(os.getenv("TRAFFIC_SIGNAL_HOLD_SEC", "0.60"))
 YOLO_IMGSZ = int(os.getenv("TRAFFIC_YOLO_IMGSZ", "640"))
 
@@ -403,6 +405,7 @@ def main():
 
     jpeg_buffer = b""
     signal_history = deque(maxlen=HISTORY_SIZE)
+    left_arrow_history = deque(maxlen=HISTORY_SIZE)
     last_stable_label = "unknown"
     last_stable_time = 0.0
     stopline_history = deque(maxlen=STOPLINE_HISTORY_SIZE)
@@ -537,6 +540,17 @@ def main():
                     "label": CLASS_NAMES[predicted_index.item()],
                 })
 
+            # Separate per-frame left-arrow evidence from the top-scoring box.
+            # A red lamp can score higher in the same traffic signal image.
+            left_arrow_history.append(any(
+                item["label"] == "greenleft"
+                and item["cls_conf"] >= 0.60
+                for item in candidates
+            ))
+            stable_left_arrow = (
+                sum(left_arrow_history) >= LEFT_ARROW_MIN_VOTES
+            )
+
             selected = None
             votes = 0
             now_signal = time.time()
@@ -624,7 +638,12 @@ def main():
 
             # Send one compact message every processed frame.
             send_ratio = stable_y_ratio if stable_y_ratio is not None else -1.0
-            message = f"{decision}|{send_ratio:.4f}|{stop_conf:.2f}"
+            # Fourth field is independent left-arrow evidence, NOT a global GO.
+            # Only an explicitly mapped left-turn intersection may prioritize it.
+            message = (
+                f"{decision}|{send_ratio:.4f}|{stop_conf:.2f}|"
+                f"{int(stable_left_arrow)}"
+            )
             decision_sock.sendto(message.encode("ascii"), decision_target)
 
             if (stable_label, decision) != last_reported:
