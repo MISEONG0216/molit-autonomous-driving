@@ -360,7 +360,7 @@ class MissionManager:
                         and merge_state == "MERGE_ACCEPT"
                         and merge_risk < threshold
                     )
-                    if accepted and merge_updated_at > self.merge_last_accept_update:
+                    if accepted and (float(merge_updated_at) - self.merge_last_accept_update) > 1e-6:
                         self.merge_last_accept_update = float(merge_updated_at)
                         self.merge_accept_count += 1
                         if self.merge_accept_count >= int(
