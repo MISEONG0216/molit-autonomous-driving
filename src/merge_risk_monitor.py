@@ -227,6 +227,11 @@ def main():
                 side.last_frame_at > processed_side_at
                 and rear.last_frame_at > processed_rear_at
             )
+            if fresh_side and fresh_rear and not has_new_pair:
+                # No new synchronized perception: do not spam UNKNOWN and
+                # overwrite a valid latest UDP assessment.
+                time.sleep(0.01)
+                continue
             if fresh_side and fresh_rear and has_new_pair:
                 processed_side_at = side.last_frame_at
                 processed_rear_at = rear.last_frame_at
