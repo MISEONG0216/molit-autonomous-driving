@@ -36,23 +36,23 @@
     "result_timeout_sec": 2,
     "zones": [
       [
-        2050,
-        2300
+        2480,
+        2560
       ],
       [
-        2740,
-        3000
+        3050,
+        3190
       ]
     ],
     "roundabout_zones": [
       [
-        3000,
-        3220
+        1770,
+        1820
       ]
     ],
     "zone_speed_kmh": 20,
     "risk_stop_threshold": 0.6,
     "accept_confirm_frames": 3,
-    "test_zone_note": "CSV high-risk positions only. Tentative test zones, not verified highway/roundabout boundaries."
+    "test_zone_note": "User-surveyed MORAI waypoint ranges: roundabout 1770-1820, merge1 2480-2560, merge2 3050-3190."
   }
 }
