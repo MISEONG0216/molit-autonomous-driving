@@ -3,7 +3,7 @@
 """Camera-based experimental risk monitor for highway merges and roundabouts.
 
 Adapted from the provided highway_merge_monitor.py.
-Only the permitted fixed Left (9293) and Right (9295) MORAI cameras are used.
+Reads the team's configured Side (9293) and Rear (1118) cameras.
 No vehicle control is transmitted: UDP risk results go to 127.0.0.1:9301.
 
 Output: MERGE|LEFT_RISK|RIGHT_RISK|MAX_RISK|MERGE_ACCEPT/MERGE_REJECT
@@ -177,15 +177,15 @@ class CameraRiskAnalyzer:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--left-port", type=int, default=9293)
-    parser.add_argument("--right-port", type=int, default=9295)
+    parser.add_argument("--side-port", type=int, default=9293)
+    parser.add_argument("--rear-port", type=int, default=1118)
     parser.add_argument("--result-ip", default="127.0.0.1")
     parser.add_argument("--result-port", type=int, default=9301)
     parser.add_argument("--stale-sec", type=float, default=1.2)
     parser.add_argument("--no-gui", action="store_true")
     args = parser.parse_args()
-    if args.left_port == args.right_port:
-        parser.error("left/right camera ports must differ")
+    if args.side_port == args.rear_port:
+        parser.error("side/rear camera ports must differ")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[MERGE] YOLO + MiDaS loading on {device}...")
@@ -196,33 +196,33 @@ def main():
     transform = torch.hub.load(
         "intel-isl/MiDaS", "transforms", trust_repo=True
     ).small_transform
-    left = MoraiJpegCamera(args.left_port)
-    right = MoraiJpegCamera(args.right_port)
+    side = MoraiJpegCamera(args.side_port)
+    rear = MoraiJpegCamera(args.rear_port)
     udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     analyzer = CameraRiskAnalyzer(device, yolo, midas, transform)
     print(
-        f"[MERGE] camera L:{args.left_port} R:{args.right_port} "
+        f"[MERGE] camera SIDE:{args.side_port} REAR:{args.rear_port} "
         f"-> {args.result_ip}:{args.result_port}"
     )
     last_send = 0.0
     try:
         while True:
-            left.poll()
-            right.poll()
+            side.poll()
+            rear.poll()
             now = time.time()
-            fresh_left = (
-                left.last_frame is not None
-                and now - left.last_frame_at <= args.stale_sec
+            fresh_side = (
+                side.last_frame is not None
+                and now - side.last_frame_at <= args.stale_sec
             )
-            fresh_right = (
-                right.last_frame is not None
-                and now - right.last_frame_at <= args.stale_sec
+            fresh_rear = (
+                rear.last_frame is not None
+                and now - rear.last_frame_at <= args.stale_sec
             )
             frames = []
-            if fresh_left and fresh_right:
+            if fresh_side and fresh_rear:
                 try:
-                    risk_l, view_l = analyzer.analyze(left.last_frame, "LEFT")
-                    risk_r, view_r = analyzer.analyze(right.last_frame, "RIGHT")
+                    risk_l, view_l = analyzer.analyze(side.last_frame, "SIDE")
+                    risk_r, view_r = analyzer.analyze(rear.last_frame, "REAR")
                     max_risk = max(risk_l, risk_r)
                     decision = (
                         "MERGE_REJECT"
@@ -251,15 +251,15 @@ def main():
                         height,
                     )) for img in frames
                 ]
-                cv2.imshow("MORAI Camera Merge Risk (Left/Right)", np.hstack(views))
+                cv2.imshow("MORAI Camera Merge Risk (Side/Rear)", np.hstack(views))
                 if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
                     break
             time.sleep(0.01)
     except KeyboardInterrupt:
         pass
     finally:
-        left.close()
-        right.close()
+        side.close()
+        rear.close()
         udp.close()
         cv2.destroyAllWindows()
 
