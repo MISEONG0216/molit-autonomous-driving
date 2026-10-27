@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import time
+import math
 
 
 class MissionManager:
@@ -21,6 +22,45 @@ class MissionManager:
         self.red_latched = False
         self.go_release_count = 0
         self._last_go_counted_update = 0.0
+        self.hold_stop_index = None
+        self.unknown_hold_stop_index = None
+        self.completed_stop_indices = set()
+        self.path_s = None
+        self.route_length_m = 0.0
+
+    def set_global_path(self, path_points):
+        """Precompute actual along-path metres instead of waypoint offsets."""
+        if path_points is None or len(path_points) < 2:
+            raise ValueError("global path must have at least two points")
+        s = [0.0]
+        for i in range(1, len(path_points)):
+            x0, y0 = float(path_points[i - 1][0]), float(path_points[i - 1][1])
+            x1, y1 = float(path_points[i][0]), float(path_points[i][1])
+            s.append(s[-1] + math.hypot(x1 - x0, y1 - y0))
+        self.path_s = s
+        self.route_length_m = s[-1]
+
+    def _next_stop(self, nearest_index):
+        """Return next unserved stop index and forward path distance (metres)."""
+        if self.path_s is None:
+            return None, None
+        if not 0 <= nearest_index < len(self.path_s):
+            return None, None
+        current_s = self.path_s[nearest_index]
+        candidates = []
+        for stop in self.stop_indices:
+            if stop in self.completed_stop_indices:
+                continue
+            if not 0 <= stop < len(self.path_s):
+                continue
+            d = self.path_s[stop] - current_s
+            if d < 0.0:
+                d += self.route_length_m
+            candidates.append((d, stop))
+        if not candidates:
+            return None, None
+        d, stop = min(candidates)
+        return stop, d
 
     def update_traffic_input(self, traffic, updated_at):
         if traffic is None:
@@ -35,45 +75,63 @@ class MissionManager:
             and now - self.signal_last_update <= timeout
         )
 
-    def _update_signal_latch(self, now):
-        # STOP latches immediately. UNKNOWN/stale frames never clear a RED stop.
-        # GO must be confirmed by distinct, fresh UDP updates (not repeated
-        # control-loop reads of a single GO packet).
-        if not self._signal_fresh(now):
+    def _update_signal_latch(self, now, active_stop, distance_m):
+        """Never release on UNKNOWN; require fresh, distinct GO UDP packets."""
+        fresh = self._signal_fresh(now)
+        if not fresh:
+            self.go_release_count = 0
             return
 
         if self.signal == "STOP":
-            self.red_latched = True
+            # With a loaded path, ignore traffic lights outside the upcoming
+            # intersection's approach zone. Without a path, retain V8 test
+            # compatibility (the main integration always supplies a path).
+            approach_m = float(
+                self.traffic_cfg.get("approach_distance_m", 60.0)
+            )
+            in_approach = (
+                self.path_s is None
+                or (
+                    active_stop is not None
+                    and distance_m is not None
+                    and distance_m <= approach_m
+                )
+            )
+            if in_approach:
+                self.red_latched = True
+                if self.hold_stop_index is None:
+                    self.hold_stop_index = active_stop
             self.go_release_count = 0
             self._last_go_counted_update = 0.0
             return
 
         if self.signal in ("GO", "GO_LEFT"):
-            if self.red_latched:
-                if self.signal_last_update > self._last_go_counted_update:
-                    self._last_go_counted_update = self.signal_last_update
-                    self.go_release_count += 1
-                    needed = int(
-                        self.traffic_cfg.get("go_release_confirm_loops", 8)
+            holding = self.red_latched or self.unknown_hold_stop_index is not None
+            if holding and self.signal_last_update > self._last_go_counted_update:
+                self._last_go_counted_update = self.signal_last_update
+                self.go_release_count += 1
+                needed = int(
+                    self.traffic_cfg.get("go_release_confirm_loops", 8)
+                )
+                if self.go_release_count >= needed:
+                    completed_stop = (
+                        self.hold_stop_index
+                        if self.hold_stop_index is not None
+                        else self.unknown_hold_stop_index
                     )
-                    if self.go_release_count >= needed:
-                        self.red_latched = False
-                        self.go_release_count = 0
-                        self._last_go_counted_update = 0.0
-            else:
+                    if completed_stop is not None:
+                        self.completed_stop_indices.add(completed_stop)
+                    self.red_latched = False
+                    self.hold_stop_index = None
+                    self.unknown_hold_stop_index = None
+                    self.go_release_count = 0
+                    self._last_go_counted_update = 0.0
+            elif not holding:
                 self.go_release_count = 0
             return
 
         self.go_release_count = 0
         self._last_go_counted_update = 0.0
-
-    def _active_stop_index(self, nearest_index):
-        start_offset = int(self.traffic_cfg.get("mission_start_offset", 25))
-        end_offset = int(self.traffic_cfg.get("mission_end_offset", 15))
-        for stop_idx in self.stop_indices:
-            if stop_idx - start_offset <= nearest_index <= stop_idx + end_offset:
-                return stop_idx
-        return None
 
     @staticmethod
     def _in_any_zone(index, zones):
@@ -113,19 +171,72 @@ class MissionManager:
         traffic_state = "OFF"
         active_stop = None
 
+        stop_distance_m = None
+        full_brake = False
+        traffic_approach = False
         if traffic_enabled:
-            self._update_signal_latch(now)
-            active_stop = self._active_stop_index(int(nearest_index))
+            active_stop, stop_distance_m = self._next_stop(
+                int(nearest_index)
+            )
+            self._update_signal_latch(now, active_stop, stop_distance_m)
             fresh = self._signal_fresh(now)
-            traffic_state = self.signal if fresh else "VISION_WAIT"
+            is_green = fresh and self.signal in ("GO", "GO_LEFT")
 
-            # Full-brake test strategy: STOP applies anywhere on the path.
-            # Do not require a waypoint/stopline window; stay stopped until
-            # GO/GO_LEFT has been confirmed on fresh camera packets.
-            if self.red_latched:
+            # RED full-brake has priority even if the waypoint is passed.
+            # UNKNOWN fallback also latches until fresh GO is confirmed.
+            if self.red_latched or self.unknown_hold_stop_index is not None:
                 target_speed = 0.0
-                traffic_state = "FULL_BRAKE_RED"
+                full_brake = True
+                if self.red_latched:
+                    traffic_state = "FULL_BRAKE_RED"
+                else:
+                    traffic_state = "FULL_BRAKE_UNKNOWN"
                 reasons.append("traffic_full_brake")
+
+            elif stop_distance_m is not None and stop_distance_m <= float(
+                self.traffic_cfg.get("approach_distance_m", 60.0)
+            ):
+                traffic_approach = True
+                # Every light approaches at <=30 km/h, even on green.
+                target_speed = min(
+                    target_speed,
+                    float(self.traffic_cfg.get("approach_speed_kmh", 30.0))
+                )
+                traffic_state = f"APPROACH_{active_stop}"
+                reasons.append("traffic_approach")
+
+                if not is_green:
+                    # Without a trustworthy GO, slow to a crawl before the
+                    # reference stop index. Do not assume UNKNOWN means GO.
+                    slow_m = float(
+                        self.traffic_cfg.get("slow_distance_m", 25.0)
+                    )
+                    crawl_m = float(
+                        self.traffic_cfg.get("crawl_distance_m", 10.0)
+                    )
+                    hold_m = float(
+                        self.traffic_cfg.get("unknown_hold_distance_m", 3.0)
+                    )
+                    if stop_distance_m <= slow_m:
+                        target_speed = min(
+                            target_speed,
+                            float(self.traffic_cfg.get("slow_speed_kmh", 12.0))
+                        )
+                        traffic_state = f"SLOW_SIGNAL_WAIT_{active_stop}"
+                    if stop_distance_m <= crawl_m:
+                        target_speed = min(
+                            target_speed,
+                            float(self.traffic_cfg.get("crawl_speed_kmh", 4.0))
+                        )
+                        traffic_state = f"CRAWL_SIGNAL_WAIT_{active_stop}"
+                    if stop_distance_m <= hold_m:
+                        self.unknown_hold_stop_index = active_stop
+                        target_speed = 0.0
+                        full_brake = True
+                        traffic_state = f"FULL_BRAKE_UNKNOWN_{active_stop}"
+                        reasons.append("traffic_full_brake")
+                else:
+                    traffic_state = f"APPROACH_GO_{active_stop}"
             elif not fresh:
                 traffic_state = "VISION_WAIT"
             else:
@@ -182,6 +293,9 @@ class MissionManager:
             "reasons": reasons,
             "traffic_state": traffic_state,
             "active_stop_index": active_stop,
+            "stop_distance_m": stop_distance_m,
+            "traffic_full_brake": full_brake,
+            "traffic_approach": traffic_approach,
             "red_latched": self.red_latched,
             "go_release_count": self.go_release_count,
             "merge_state": merge_state,
