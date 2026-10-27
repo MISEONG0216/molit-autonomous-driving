@@ -77,6 +77,7 @@ def open_log():
         "merge_state", "merge_risk", "mission_reasons",
         "traffic_stop_index", "traffic_stop_distance_m",
         "traffic_full_brake", "traffic_approach", "traffic_left_override",
+        "merge_zone", "merge_stop", "merge_accept_count",
     ])
     return path, f, w
 
@@ -194,7 +195,8 @@ def main():
         print("[TRAFFIC GO] 8 fresh consecutive GO packets required to release")
     print(
         f"[MERGE] {'ON' if args.merge else 'OFF'} / "
-        f"control={'ON' if args.merge_control else 'OBSERVE'}"
+        f"control={'ON' if args.merge_control else 'OBSERVE'} / "
+        f"test_all={args.merge_all}"
     )
     print(
         f"[MORAI CTRL] {network['control']['target_ip']}:"
@@ -320,8 +322,10 @@ def main():
             dt_control = max(1e-3, now - prev_control_time)
             prev_control_time = now
 
-            if args.traffic and mission["traffic_full_brake"]:
-                # STOP latch only: cut throttle and hold full brake.
+            if (args.traffic and mission["traffic_full_brake"]) or (
+                args.merge_control and mission["merge_stop"]
+            ):
+                # Traffic or merge STOP: zero throttle and immediate full brake.
                 command_limiter.reset()
                 accel_cmd, brake_cmd, signed_cmd = 0.0, 1.0, -1.0
                 control_zone = "TRAFFIC_FULL_BRAKE"
@@ -385,6 +389,9 @@ def main():
                 int(mission["traffic_full_brake"]),
                 int(mission["traffic_approach"]),
                 int(mission["left_arrow_override"]),
+                int(mission["merge_zone"]),
+                int(mission["merge_stop"]),
+                mission["merge_accept_count"],
             ])
 
             print("\033[2J\033[H", end="")
@@ -441,7 +448,9 @@ def main():
             print(
                 f"MERGE       : {mission['merge_state']} / "
                 f"RISK={mission['merge_risk']:.2f} / "
-                f"CTRL={'ON' if args.merge_control else 'OBSERVE'}"
+                f"CTRL={'ON' if args.merge_control else 'OBSERVE'} / "
+                f"ZONE={mission['merge_zone']} / STOP={mission['merge_stop']} / "
+                f"SAFE={mission['merge_accept_count']}"
             )
             print(
                 f"MISSION     : {mission['reasons'] or ['base_v7']}"
