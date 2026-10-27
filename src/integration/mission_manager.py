@@ -215,7 +215,7 @@ class MissionManager:
                         self.traffic_cfg.get("crawl_distance_m", 10.0)
                     )
                     hold_m = float(
-                        self.traffic_cfg.get("unknown_hold_distance_m", 3.0)
+                        self.traffic_cfg.get("unknown_hold_distance_m", 0.5)
                     )
                     if stop_distance_m <= slow_m:
                         target_speed = min(
