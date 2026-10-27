@@ -14,7 +14,10 @@
         "near_distance_m": 35,
         "near_speed_kmh": 10
       }
-    }
+    },
+    "left_turn_stops": [
+      1104
+    ]
   },
   "merge": {
     "result_timeout_sec": 0.8,
