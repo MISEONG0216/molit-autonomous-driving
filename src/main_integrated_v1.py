@@ -76,7 +76,7 @@ def open_log():
         "red_latched", "go_release_count",
         "merge_state", "merge_risk", "mission_reasons",
         "traffic_stop_index", "traffic_stop_distance_m",
-        "traffic_full_brake", "traffic_approach",
+        "traffic_full_brake", "traffic_approach", "traffic_left_override",
     ])
     return path, f, w
 
@@ -384,6 +384,7 @@ def main():
                  if mission["stop_distance_m"] is not None else ""),
                 int(mission["traffic_full_brake"]),
                 int(mission["traffic_approach"]),
+                int(mission["left_arrow_override"]),
             ])
 
             print("\033[2J\033[H", end="")
@@ -427,7 +428,8 @@ def main():
             print(
                 f"TRAFFIC CTRL: {mission['traffic_state']} / "
                 f"RED={mission['red_latched']} / "
-                f"GO={mission['go_release_count']}"
+                f"GO={mission['go_release_count']} / "
+                f"LEFT_OVERRIDE={mission['left_arrow_override']}"
             )
             stop_dist = mission["stop_distance_m"]
             print(
