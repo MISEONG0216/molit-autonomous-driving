@@ -23,7 +23,6 @@ class MissionManager:
         self.go_release_count = 0
         self._last_go_counted_update = 0.0
         self.hold_stop_index = None
-        self.unknown_hold_stop_index = None
         self.completed_stop_indices = set()
         self.path_s = None
         self.route_length_m = 0.0
@@ -106,7 +105,7 @@ class MissionManager:
             return
 
         if self.signal in ("GO", "GO_LEFT"):
-            holding = self.red_latched or self.unknown_hold_stop_index is not None
+            holding = self.red_latched
             if holding and self.signal_last_update > self._last_go_counted_update:
                 self._last_go_counted_update = self.signal_last_update
                 self.go_release_count += 1
@@ -114,17 +113,12 @@ class MissionManager:
                     self.traffic_cfg.get("go_release_confirm_loops", 8)
                 )
                 if self.go_release_count >= needed:
-                    completed_stop = (
-                        self.hold_stop_index
-                        if self.hold_stop_index is not None
-                        else self.unknown_hold_stop_index
-                    )
+                    completed_stop = self.hold_stop_index
                     if completed_stop is not None:
                         self.completed_stop_indices.add(completed_stop)
                     self.red_latched = False
                     self.hold_stop_index = None
-                    self.unknown_hold_stop_index = None
-                    self.go_release_count = 0
+                                self.go_release_count = 0
                     self._last_go_counted_update = 0.0
             elif not holding:
                 self.go_release_count = 0
@@ -182,61 +176,28 @@ class MissionManager:
             fresh = self._signal_fresh(now)
             is_green = fresh and self.signal in ("GO", "GO_LEFT")
 
-            # RED full-brake has priority even if the waypoint is passed.
-            # UNKNOWN fallback also latches until fresh GO is confirmed.
-            if self.red_latched or self.unknown_hold_stop_index is not None:
+            # Limit speed near each traffic light, regardless of its colour.
+            # Only a confirmed STOP triggers full braking; UNKNOWN alone does not.
+            if self.red_latched:
                 target_speed = 0.0
                 full_brake = True
-                if self.red_latched:
-                    traffic_state = "FULL_BRAKE_RED"
-                else:
-                    traffic_state = "FULL_BRAKE_UNKNOWN"
+                traffic_state = "FULL_BRAKE_RED"
                 reasons.append("traffic_full_brake")
-
             elif stop_distance_m is not None and stop_distance_m <= float(
                 self.traffic_cfg.get("approach_distance_m", 60.0)
             ):
                 traffic_approach = True
-                # Every light approaches at <=30 km/h, even on green.
                 target_speed = min(
                     target_speed,
                     float(self.traffic_cfg.get("approach_speed_kmh", 30.0))
                 )
-                traffic_state = f"APPROACH_{active_stop}"
-                reasons.append("traffic_approach")
-
-                if not is_green:
-                    # Without a trustworthy GO, slow to a crawl before the
-                    # reference stop index. Do not assume UNKNOWN means GO.
-                    slow_m = float(
-                        self.traffic_cfg.get("slow_distance_m", 25.0)
-                    )
-                    crawl_m = float(
-                        self.traffic_cfg.get("crawl_distance_m", 10.0)
-                    )
-                    hold_m = float(
-                        self.traffic_cfg.get("unknown_hold_distance_m", 0.5)
-                    )
-                    if stop_distance_m <= slow_m:
-                        target_speed = min(
-                            target_speed,
-                            float(self.traffic_cfg.get("slow_speed_kmh", 12.0))
-                        )
-                        traffic_state = f"SLOW_SIGNAL_WAIT_{active_stop}"
-                    if stop_distance_m <= crawl_m:
-                        target_speed = min(
-                            target_speed,
-                            float(self.traffic_cfg.get("crawl_speed_kmh", 4.0))
-                        )
-                        traffic_state = f"CRAWL_SIGNAL_WAIT_{active_stop}"
-                    if stop_distance_m <= hold_m:
-                        self.unknown_hold_stop_index = active_stop
-                        target_speed = 0.0
-                        full_brake = True
-                        traffic_state = f"FULL_BRAKE_UNKNOWN_{active_stop}"
-                        reasons.append("traffic_full_brake")
-                else:
+                if not fresh:
+                    traffic_state = f"APPROACH_VISION_WAIT_{active_stop}"
+                elif is_green:
                     traffic_state = f"APPROACH_GO_{active_stop}"
+                else:
+                    traffic_state = f"APPROACH_{active_stop}"
+                reasons.append("traffic_approach")
             elif not fresh:
                 traffic_state = "VISION_WAIT"
             else:
