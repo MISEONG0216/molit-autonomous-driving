@@ -2,18 +2,33 @@
   "traffic": {
     "signal_timeout_sec": 1.2,
     "go_release_confirm_loops": 8,
-    "mission_start_offset": 25,
-    "slowdown_offset": 20,
-    "mission_end_offset": 15,
-    "approach_speed_kmh": 3.0
+    "approach_distance_m": 60,
+    "approach_speed_kmh": 30,
+    "slow_distance_m": 25,
+    "slow_speed_kmh": 12,
+    "crawl_distance_m": 10,
+    "crawl_speed_kmh": 4,
+    "unknown_hold_distance_m": 3,
+    "approach_brake_min_cmd": 0.14,
+    "approach_brake_gain": 0.028,
+    "approach_brake_max_cmd": 0.5
   },
   "merge": {
     "result_timeout_sec": 0.8,
     "zones": [],
     "risk_speed_caps": [
-      {"min_risk": 0.80, "cap_kmh": 10.0},
-      {"min_risk": 0.60, "cap_kmh": 20.0},
-      {"min_risk": 0.40, "cap_kmh": 35.0}
+      {
+        "min_risk": 0.8,
+        "cap_kmh": 10
+      },
+      {
+        "min_risk": 0.6,
+        "cap_kmh": 20
+      },
+      {
+        "min_risk": 0.4,
+        "cap_kmh": 35
+      }
     ]
   }
 }
