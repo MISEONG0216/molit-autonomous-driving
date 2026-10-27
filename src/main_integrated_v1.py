@@ -196,7 +196,9 @@ def main():
     print(
         f"[MERGE] {'ON' if args.merge else 'OFF'} / "
         f"control={'ON' if args.merge_control else 'OBSERVE'} / "
-        f"test_all={args.merge_all}"
+        f"test_all={args.merge_all} / "
+        f"zones={missions.get('merge', {}).get('zones', [])} / "
+        f"roundabout_zones={missions.get('merge', {}).get('roundabout_zones', [])}"
     )
     print(
         f"[MORAI CTRL] {network['control']['target_ip']}:"
@@ -328,7 +330,11 @@ def main():
                 # Traffic or merge STOP: zero throttle and immediate full brake.
                 command_limiter.reset()
                 accel_cmd, brake_cmd, signed_cmd = 0.0, 1.0, -1.0
-                control_zone = "TRAFFIC_FULL_BRAKE"
+                control_zone = (
+                    "TRAFFIC_FULL_BRAKE"
+                    if args.traffic and mission["traffic_full_brake"]
+                    else "MERGE_FULL_BRAKE"
+                )
             elif (
                 (
                     (args.traffic and mission["traffic_approach"])
