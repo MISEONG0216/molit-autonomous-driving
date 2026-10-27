@@ -8,6 +8,17 @@
     "approach_brake_gain": 0.028,
     "approach_brake_max_cmd": 0.5,
     "stop_overrides": {
+      "414": {
+        "approach_distance_m": 60,
+        "approach_speed_kmh": 30,
+        "red_stop_offset_m": 8,
+        "red_slow_start_m": 45,
+        "red_slow_speed_kmh": 20,
+        "red_near_distance_m": 20,
+        "red_near_speed_kmh": 9,
+        "red_final_distance_m": 12,
+        "red_final_speed_kmh": 5
+      },
       "620": {
         "approach_distance_m": 100,
         "approach_speed_kmh": 25,
