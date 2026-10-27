@@ -18,6 +18,7 @@ class MissionManager:
         self.stop_indices = [int(x) for x in stop_indices]
 
         self.signal = "UNKNOWN"
+        self.left_arrow = False
         self.signal_last_update = 0.0
         self.red_latched = False
         self.go_release_count = 0
@@ -52,10 +53,12 @@ class MissionManager:
                 continue
             if not 0 <= stop < len(self.path_s):
                 continue
+            # One-lap competition run: a passed green signal must not
+            # wrap around and conceal the next physical intersection.
             d = self.path_s[stop] - current_s
-            if d < 0.0:
-                d += self.route_length_m
-            candidates.append((d, stop))
+            if d < -0.01:
+                continue
+            candidates.append((max(0.0, d), stop))
         if not candidates:
             return None, None
         d, stop = min(candidates)
@@ -65,6 +68,7 @@ class MissionManager:
         if traffic is None:
             return
         self.signal = str(traffic.get("signal", "UNKNOWN")).upper()
+        self.left_arrow = bool(traffic.get("left_arrow", False))
         self.signal_last_update = float(updated_at or 0.0)
 
     def _signal_fresh(self, now):
@@ -81,7 +85,25 @@ class MissionManager:
             self.go_release_count = 0
             return
 
-        if self.signal == "STOP":
+        left_turn_stops = {
+            int(i) for i in self.traffic_cfg.get("left_turn_stops", [])
+        }
+        left_in_zone = (
+            active_stop in left_turn_stops
+            and distance_m is not None
+            and distance_m <= float(
+                self.traffic_cfg.get("approach_distance_m", 60.0)
+            )
+        )
+        # Priority applies ONLY to a mapped turn. Independent, stabilized
+        # camera left-arrow evidence overrides an otherwise selected red lamp.
+        effective_signal = (
+            "GO_LEFT"
+            if left_in_zone and self.left_arrow
+            else self.signal
+        )
+
+        if effective_signal == "STOP":
             # With a loaded path, ignore traffic lights outside the upcoming
             # intersection's approach zone. Without a path, retain V8 test
             # compatibility (the main integration always supplies a path).
@@ -108,7 +130,7 @@ class MissionManager:
             self._last_go_counted_update = 0.0
             return
 
-        if self.signal in ("GO", "GO_LEFT"):
+        if effective_signal in ("GO", "GO_LEFT"):
             holding = self.red_latched
             if holding and self.signal_last_update > self._last_go_counted_update:
                 self._last_go_counted_update = self.signal_last_update
@@ -178,7 +200,21 @@ class MissionManager:
             )
             self._update_signal_latch(now, active_stop, stop_distance_m)
             fresh = self._signal_fresh(now)
-            is_green = fresh and self.signal in ("GO", "GO_LEFT")
+            left_turn_stops = {
+                int(i) for i in self.traffic_cfg.get("left_turn_stops", [])
+            }
+            left_override = (
+                fresh
+                and active_stop in left_turn_stops
+                and stop_distance_m is not None
+                and stop_distance_m <= float(
+                    self.traffic_cfg.get("approach_distance_m", 60.0)
+                )
+                and self.left_arrow
+            )
+            is_green = fresh and (
+                self.signal in ("GO", "GO_LEFT") or left_override
+            )
 
             # Limit speed near each traffic light, regardless of its colour.
             # Only a confirmed STOP triggers full braking; UNKNOWN alone does not.
@@ -218,7 +254,10 @@ class MissionManager:
                 elif not fresh:
                     traffic_state = f"APPROACH_VISION_WAIT_{active_stop}"
                 elif is_green:
-                    traffic_state = f"APPROACH_GO_{active_stop}"
+                    traffic_state = (
+                        f"APPROACH_GO_LEFT_{active_stop}"
+                        if left_override else f"APPROACH_GO_{active_stop}"
+                    )
                 else:
                     traffic_state = f"APPROACH_{active_stop}"
                 if traffic_approach:
@@ -280,6 +319,9 @@ class MissionManager:
             "traffic_full_brake": full_brake,
             "traffic_approach": traffic_approach,
             "red_latched": self.red_latched,
+            "left_arrow_override": bool(
+                traffic_enabled and fresh and left_override
+            ),
             "go_release_count": self.go_release_count,
             "merge_state": merge_state,
             "merge_risk": merge_risk,
