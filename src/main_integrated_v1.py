@@ -330,8 +330,10 @@ def main():
                 accel_cmd, brake_cmd, signed_cmd = 0.0, 1.0, -1.0
                 control_zone = "TRAFFIC_FULL_BRAKE"
             elif (
-                args.traffic
-                and mission["traffic_approach"]
+                (
+                    (args.traffic and mission["traffic_approach"])
+                    or (args.merge_control and mission["merge_zone"])
+                )
                 and current_speed_kmh > target_speed_kmh + 0.8
             ):
                 # V7 cruise braking is capped at 0.10. Approach-specific
