@@ -39,6 +39,7 @@ def parse_traffic_message(raw):
             "signal": "UNKNOWN",
             "stopline_y": None,
             "stopline_conf": 0.0,
+            "left_arrow": False,
         }
 
     text = raw.decode("ascii", errors="ignore").strip().upper()
@@ -62,10 +63,13 @@ def parse_traffic_message(raw):
         except Exception:
             pass
 
+    # Optional V11 field; older three-field messages remain supported.
+    left_arrow = len(parts) >= 4 and parts[3].strip() == "1"
     return {
         "signal": signal,
         "stopline_y": stopline_y,
         "stopline_conf": stopline_conf,
+        "left_arrow": left_arrow,
     }
 
 
