@@ -20,8 +20,7 @@ class MissionManager:
         self.signal_last_update = 0.0
         self.red_latched = False
         self.go_release_count = 0
-        self.intersection_stop_hold = False
-        self.hold_stop_index = None
+        self._last_go_counted_update = 0.0
 
     def update_traffic_input(self, traffic, updated_at):
         if traffic is None:
@@ -37,30 +36,36 @@ class MissionManager:
         )
 
     def _update_signal_latch(self, now):
-        # Preserve the validated branch behavior: GO confirmation increments
-        # per control-loop while the latest GO/GO_LEFT result is still fresh.
+        # STOP latches immediately. UNKNOWN/stale frames never clear a RED stop.
+        # GO must be confirmed by distinct, fresh UDP updates (not repeated
+        # control-loop reads of a single GO packet).
         if not self._signal_fresh(now):
             return
 
         if self.signal == "STOP":
             self.red_latched = True
             self.go_release_count = 0
+            self._last_go_counted_update = 0.0
             return
 
         if self.signal in ("GO", "GO_LEFT"):
             if self.red_latched:
-                self.go_release_count += 1
-                needed = int(self.traffic_cfg.get("go_release_confirm_loops", 8))
-                if self.go_release_count >= needed:
-                    self.red_latched = False
-                    self.intersection_stop_hold = False
-                    self.hold_stop_index = None
-                    self.go_release_count = 0
+                if self.signal_last_update > self._last_go_counted_update:
+                    self._last_go_counted_update = self.signal_last_update
+                    self.go_release_count += 1
+                    needed = int(
+                        self.traffic_cfg.get("go_release_confirm_loops", 8)
+                    )
+                    if self.go_release_count >= needed:
+                        self.red_latched = False
+                        self.go_release_count = 0
+                        self._last_go_counted_update = 0.0
             else:
                 self.go_release_count = 0
             return
 
         self.go_release_count = 0
+        self._last_go_counted_update = 0.0
 
     def _active_stop_index(self, nearest_index):
         start_offset = int(self.traffic_cfg.get("mission_start_offset", 25))
@@ -114,47 +119,17 @@ class MissionManager:
             fresh = self._signal_fresh(now)
             traffic_state = self.signal if fresh else "VISION_WAIT"
 
-            if active_stop is not None:
-                slowdown_offset = int(self.traffic_cfg.get("slowdown_offset", 20))
-                approach_speed = float(
-                    self.traffic_cfg.get("approach_speed_kmh", 3.0)
-                )
-                slowdown_index = active_stop - slowdown_offset
-
-                if self.intersection_stop_hold:
-                    target_speed = 0.0
-                    steering = 0.0
-                    if self.red_latched:
-                        traffic_state = f"HOLD_RED_{active_stop}"
-                    else:
-                        traffic_state = "HOLD_RELEASE_WAIT"
-                    reasons.append("traffic_hold")
-
-                elif self.red_latched:
-                    if nearest_index >= active_stop:
-                        self.intersection_stop_hold = True
-                        self.hold_stop_index = active_stop
-                        target_speed = 0.0
-                        steering = 0.0
-                        traffic_state = f"STOP_GPS_{active_stop}"
-                        reasons.append("traffic_stop")
-
-                    elif nearest_index >= slowdown_index:
-                        target_speed = min(target_speed, approach_speed)
-                        traffic_state = f"APPROACH_RED_{active_stop}"
-                        reasons.append("traffic_slow")
-
-                    else:
-                        traffic_state = f"RED_FAR_{active_stop}"
-
-                elif not fresh:
-                    traffic_state = "VISION_WAIT"
-                elif self.signal == "UNKNOWN":
-                    traffic_state = "UNKNOWN"
-                else:
-                    traffic_state = self.signal
+            # Full-brake test strategy: STOP applies anywhere on the path.
+            # Do not require a waypoint/stopline window; stay stopped until
+            # GO/GO_LEFT has been confirmed on fresh camera packets.
+            if self.red_latched:
+                target_speed = 0.0
+                traffic_state = "FULL_BRAKE_RED"
+                reasons.append("traffic_full_brake")
+            elif not fresh:
+                traffic_state = "VISION_WAIT"
             else:
-                traffic_state = "CRUISE"
+                traffic_state = self.signal
 
         merge_state = "OFF"
         merge_risk = 0.0
