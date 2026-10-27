@@ -189,8 +189,8 @@ def main():
     print(f"[MODE] {'DRIVE' if args.drive else 'DRY-RUN'}")
     print(f"[TRAFFIC] {'ON' if args.traffic else 'OFF'} / stops={stop_indices}")
     if args.traffic:
-        print("[TRAFFIC] 60m: <=30km/h / 25m: <=12km/h / 10m: <=4km/h")
-        print("[TRAFFIC BRAKE] RED or UNKNOWN at <=0.5m: accel=0 / brake=1")
+        print("[TRAFFIC] 60m approach: <=30km/h (regardless of colour)")
+        print("[TRAFFIC BRAKE] RED only: accel=0 / brake=1")
         print("[TRAFFIC GO] 8 fresh consecutive GO packets required to release")
     print(
         f"[MERGE] {'ON' if args.merge else 'OFF'} / "
@@ -321,8 +321,7 @@ def main():
             prev_control_time = now
 
             if args.traffic and mission["traffic_full_brake"]:
-                # RED, or UNKNOWN extremely near the mapped stop index:
-                # cut old throttle immediately and hold full brake.
+                # STOP latch only: cut throttle and hold full brake.
                 command_limiter.reset()
                 accel_cmd, brake_cmd, signed_cmd = 0.0, 1.0, -1.0
                 control_zone = "TRAFFIC_FULL_BRAKE"
