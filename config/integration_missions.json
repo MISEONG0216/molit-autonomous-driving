@@ -34,10 +34,25 @@
   },
   "merge": {
     "result_timeout_sec": 2,
-    "zones": [],
-    "roundabout_zones": [],
-    "zone_speed_kmh": 25,
+    "zones": [
+      [
+        2180,
+        2270
+      ],
+      [
+        2870,
+        2970
+      ]
+    ],
+    "roundabout_zones": [
+      [
+        3050,
+        3180
+      ]
+    ],
+    "zone_speed_kmh": 20,
     "risk_stop_threshold": 0.6,
-    "accept_confirm_frames": 3
+    "accept_confirm_frames": 3,
+    "test_zone_note": "CSV high-risk positions only. Tentative test zones, not verified highway/roundabout boundaries."
   }
 }
