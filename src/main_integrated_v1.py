@@ -5,7 +5,7 @@
 
 Base controller: the exact V7 import chain already validated on MORAI.
 Missions:
-- traffic-light STOP triggers immediate full-brake; confirmed GO releases it
+- traffic approaches at <=30 km/h; RED triggers full brake, confirmed GO releases it
 - highway merge risk optionally caps speed; it never changes the global path or steering
 
 Only this process sends EgoCtrlCmd.
@@ -75,6 +75,8 @@ def open_log():
         "traffic_raw", "traffic_age_sec", "traffic_state",
         "red_latched", "go_release_count",
         "merge_state", "merge_risk", "mission_reasons",
+        "traffic_stop_index", "traffic_stop_distance_m",
+        "traffic_full_brake", "traffic_approach",
     ])
     return path, f, w
 
@@ -163,6 +165,7 @@ def main():
         missions.get("merge", {}),
         stop_indices,
     )
+    mission_manager.set_global_path(global_path)
 
     command_limiter = base.LongitudinalCommandLimiter(
         base.LONGITUDINAL_CMD_RATE_PER_SEC
@@ -186,7 +189,9 @@ def main():
     print(f"[MODE] {'DRIVE' if args.drive else 'DRY-RUN'}")
     print(f"[TRAFFIC] {'ON' if args.traffic else 'OFF'} / stops={stop_indices}")
     if args.traffic:
-        print("[TRAFFIC BRAKE] RED=accel 0.0 / brake 1.0 (limiter bypass)")
+        print("[TRAFFIC] 60m: <=30km/h / 25m: <=12km/h / 10m: <=4km/h")
+        print("[TRAFFIC BRAKE] RED or UNKNOWN at <=3m: accel=0 / brake=1")
+        print("[TRAFFIC GO] 8 fresh consecutive GO packets required to release")
     print(
         f"[MERGE] {'ON' if args.merge else 'OFF'} / "
         f"control={'ON' if args.merge_control else 'OBSERVE'}"
@@ -315,14 +320,34 @@ def main():
             dt_control = max(1e-3, now - prev_control_time)
             prev_control_time = now
 
-            if args.traffic and mission["red_latched"]:
-                # Immediate RED stop: do not ramp down the previous throttle
-                # or cap the brake at the V7 cruise/curve-control limit.
+            if args.traffic and mission["traffic_full_brake"]:
+                # RED, or UNKNOWN extremely near the mapped stop index:
+                # cut old throttle immediately and hold full brake.
                 command_limiter.reset()
                 accel_cmd, brake_cmd, signed_cmd = 0.0, 1.0, -1.0
                 control_zone = "TRAFFIC_FULL_BRAKE"
+            elif (
+                args.traffic
+                and mission["traffic_approach"]
+                and current_speed_kmh > target_speed_kmh + 0.8
+            ):
+                # V7 cruise braking is capped at 0.10. Approach-specific
+                # stronger brake helps track the 30/12/4 km/h speed caps.
+                command_limiter.reset()
+                err_kmh = current_speed_kmh - target_speed_kmh
+                cfg = missions.get("traffic", {})
+                approach_brake = min(
+                    float(cfg.get("approach_brake_max_cmd", 0.5)),
+                    max(
+                        float(cfg.get("approach_brake_min_cmd", 0.14)),
+                        float(cfg.get("approach_brake_gain", 0.028)) * err_kmh,
+                    ),
+                )
+                accel_cmd, brake_cmd = 0.0, approach_brake
+                signed_cmd = -brake_cmd
+                control_zone = "TRAFFIC_APPROACH_BRAKE"
             else:
-                # Starts from zero after GREEN release; no stale throttle.
+                # Resume regular V7 longitudinal limiting after GO.
                 accel_cmd, brake_cmd, signed_cmd = command_limiter.update(
                     desired_accel,
                     desired_brake,
@@ -354,6 +379,12 @@ def main():
                 mission["merge_state"],
                 f"{mission['merge_risk']:.3f}",
                 ";".join(mission["reasons"]),
+                (mission["active_stop_index"]
+                 if mission["active_stop_index"] is not None else ""),
+                (f'{mission["stop_distance_m"]:.3f}'
+                 if mission["stop_distance_m"] is not None else ""),
+                int(mission["traffic_full_brake"]),
+                int(mission["traffic_approach"]),
             ])
 
             print("\033[2J\033[H", end="")
@@ -398,6 +429,13 @@ def main():
                 f"TRAFFIC CTRL: {mission['traffic_state']} / "
                 f"RED={mission['red_latched']} / "
                 f"GO={mission['go_release_count']}"
+            )
+            stop_dist = mission["stop_distance_m"]
+            print(
+                f"STOP TARGET : {mission['active_stop_index']} / "
+                f"distance={stop_dist:.1f}m"
+                if stop_dist is not None else
+                "STOP TARGET : NONE"
             )
             print(
                 f"MERGE       : {mission['merge_state']} / "
