@@ -4,11 +4,6 @@
     "go_release_confirm_loops": 8,
     "approach_distance_m": 60,
     "approach_speed_kmh": 30,
-    "slow_distance_m": 25,
-    "slow_speed_kmh": 12,
-    "crawl_distance_m": 10,
-    "crawl_speed_kmh": 4,
-    "unknown_hold_distance_m": 0.5,
     "approach_brake_min_cmd": 0.14,
     "approach_brake_gain": 0.028,
     "approach_brake_max_cmd": 0.5
