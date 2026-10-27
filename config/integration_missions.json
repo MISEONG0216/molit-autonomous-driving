@@ -15,10 +15,11 @@
         "near_speed_kmh": 10
       },
       "1224": {
-        "approach_distance_m": 100,
+        "approach_distance_m": 60,
         "approach_speed_kmh": 20,
         "near_distance_m": 30,
-        "near_speed_kmh": 8
+        "near_speed_kmh": 8,
+        "signal_activation_index": 1150
       }
     },
     "left_turn_stops": [
