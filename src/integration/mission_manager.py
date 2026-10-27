@@ -48,7 +48,12 @@ class MissionManager:
             return None, None
         current_s = self.path_s[nearest_index]
         candidates = []
+        ignored = {
+            int(i) for i in self.traffic_cfg.get("ignore_signal_stops", [])
+        }
         for stop in self.stop_indices:
+            if stop in ignored:
+                continue
             if stop in self.completed_stop_indices:
                 continue
             if not 0 <= stop < len(self.path_s):
@@ -78,7 +83,7 @@ class MissionManager:
             and now - self.signal_last_update <= timeout
         )
 
-    def _update_signal_latch(self, now, active_stop, distance_m):
+    def _update_signal_latch(self, now, active_stop, distance_m, nearest_index=None):
         """Never release on UNKNOWN; require fresh, distinct GO UDP packets."""
         fresh = self._signal_fresh(now)
         if not fresh:
@@ -88,20 +93,42 @@ class MissionManager:
         left_turn_stops = {
             int(i) for i in self.traffic_cfg.get("left_turn_stops", [])
         }
+        only_left_stops = {
+            int(i) for i in self.traffic_cfg.get("left_only_stops", [])
+        }
+        override = self.traffic_cfg.get("stop_overrides", {}).get(
+            str(active_stop), {}
+        )
+        approach_m = float(override.get(
+            "approach_distance_m",
+            self.traffic_cfg.get("approach_distance_m", 60.0),
+        ))
+        signal_gate = int(override.get("signal_activation_index", 0))
         left_in_zone = (
             active_stop in left_turn_stops
             and distance_m is not None
-            and distance_m <= float(
-                self.traffic_cfg.get("approach_distance_m", 60.0)
-            )
+            and distance_m <= approach_m
+            and (nearest_index is None or nearest_index >= signal_gate)
         )
         # Priority applies ONLY to a mapped turn. Independent, stabilized
         # camera left-arrow evidence overrides an otherwise selected red lamp.
         effective_signal = (
             "GO_LEFT"
-            if left_in_zone and self.left_arrow
+            if left_in_zone and (self.left_arrow or self.signal == "GO_LEFT")
             else self.signal
         )
+        # An ordinary green light does not permit a mapped left-only turn.
+        if active_stop in only_left_stops and effective_signal == "GO":
+            effective_signal = "STOP"
+
+        # Ignore visible lights belonging to the preceding junction until
+        # reaching this junction's configured signal-recognition gate.
+        if (
+            active_stop in only_left_stops
+            and nearest_index is not None
+            and nearest_index < signal_gate
+        ):
+            return
 
         if effective_signal == "STOP":
             # With a loaded path, ignore traffic lights outside the upcoming
@@ -198,7 +225,9 @@ class MissionManager:
             active_stop, stop_distance_m = self._next_stop(
                 int(nearest_index)
             )
-            self._update_signal_latch(now, active_stop, stop_distance_m)
+            self._update_signal_latch(
+                now, active_stop, stop_distance_m, int(nearest_index)
+            )
             fresh = self._signal_fresh(now)
             left_turn_stops = {
                 int(i) for i in self.traffic_cfg.get("left_turn_stops", [])
@@ -212,8 +241,13 @@ class MissionManager:
                 )
                 and self.left_arrow
             )
+            left_only_stops = {
+                int(i) for i in self.traffic_cfg.get("left_only_stops", [])
+            }
             is_green = fresh and (
-                self.signal in ("GO", "GO_LEFT") or left_override
+                (self.signal in ("GO", "GO_LEFT") or left_override)
+                if active_stop not in left_only_stops
+                else (self.signal == "GO_LEFT" or left_override)
             )
 
             # Limit speed near each traffic light, regardless of its colour.
