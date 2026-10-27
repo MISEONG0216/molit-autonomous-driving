@@ -96,7 +96,7 @@ def parse_merge_message(raw):
         if decision not in ("MERGE_ACCEPT", "MERGE_REJECT"):
             decision = "UNKNOWN"
         result.update({
-            "valid": True,
+            "valid": decision != "UNKNOWN",
             "side_risk": side,
             "rear_risk": rear,
             "max_risk": max_risk,
