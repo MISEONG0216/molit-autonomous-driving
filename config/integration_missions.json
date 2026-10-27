@@ -33,21 +33,11 @@
     ]
   },
   "merge": {
-    "result_timeout_sec": 0.8,
+    "result_timeout_sec": 2,
     "zones": [],
-    "risk_speed_caps": [
-      {
-        "min_risk": 0.8,
-        "cap_kmh": 10
-      },
-      {
-        "min_risk": 0.6,
-        "cap_kmh": 20
-      },
-      {
-        "min_risk": 0.4,
-        "cap_kmh": 35
-      }
-    ]
+    "roundabout_zones": [],
+    "zone_speed_kmh": 25,
+    "risk_stop_threshold": 0.6,
+    "accept_confirm_frames": 3
   }
 }
