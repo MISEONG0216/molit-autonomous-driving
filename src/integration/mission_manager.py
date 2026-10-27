@@ -27,6 +27,9 @@ class MissionManager:
         self.completed_stop_indices = set()
         self.path_s = None
         self.route_length_m = 0.0
+        self.merge_stop_latched = False
+        self.merge_accept_count = 0
+        self.merge_last_accept_update = 0.0
 
     def set_global_path(self, path_points):
         """Precompute actual along-path metres instead of waypoint offsets."""
@@ -301,48 +304,89 @@ class MissionManager:
         merge_state = "OFF"
         merge_risk = 0.0
         merge_fresh = False
+        merge_zone = False
+        merge_stop = False
 
-        if merge_enabled and merge_result:
-            timeout = float(self.merge_cfg.get("result_timeout_sec", 0.8))
+        if merge_enabled:
+            timeout = float(self.merge_cfg.get("result_timeout_sec", 2.0))
             merge_fresh = (
-                bool(merge_result.get("valid", False))
+                bool(merge_result and merge_result.get("valid", False))
                 and merge_updated_at > 0.0
                 and now - float(merge_updated_at) <= timeout
             )
             if merge_fresh:
                 merge_risk = float(merge_result.get("max_risk", 0.0))
-                merge_state = str(
-                    merge_result.get("decision", "UNKNOWN")
-                )
+                merge_state = str(merge_result.get("decision", "UNKNOWN"))
             else:
-                merge_state = "STALE"
+                merge_state = "VISION_WAIT"
 
-        # Clarified strategy: always keep the global path. Merge perception
-        # only imposes a speed cap in a configured elevated/highway zone.
-        if (
-            merge_enabled
-            and merge_control_enabled
-            and merge_fresh
-        ):
-            zones = self.merge_cfg.get("zones", [])
-            zone_active = bool(merge_all) or self._in_any_zone(
+        if merge_enabled and merge_control_enabled:
+            # Only the configured highway/roundabout ranges are armed.
+            zones = (
+                list(self.merge_cfg.get("zones", []))
+                + list(self.merge_cfg.get("roundabout_zones", []))
+            )
+            merge_zone = bool(merge_all) or self._in_any_zone(
                 int(nearest_index), zones
             )
+            if not merge_zone:
+                # Clear a previous zone's stop request on exit.
+                self.merge_stop_latched = False
+                self.merge_accept_count = 0
+                self.merge_last_accept_update = 0.0
+            else:
+                target_speed = min(
+                    target_speed,
+                    float(self.merge_cfg.get("zone_speed_kmh", 25.0))
+                )
+                reasons.append("merge_zone_speed")
+                threshold = float(self.merge_cfg.get("risk_stop_threshold", 0.60))
+                dangerous = (
+                    merge_fresh
+                    and (
+                        merge_state == "MERGE_REJECT"
+                        or merge_risk >= threshold
+                    )
+                )
+                if dangerous:
+                    self.merge_stop_latched = True
+                    self.merge_accept_count = 0
+                    self.merge_last_accept_update = 0.0
+                elif self.merge_stop_latched:
+                    # Release only after distinct low-risk camera updates.
+                    # UNKNOWN or stale observations cannot release the stop.
+                    accepted = (
+                        merge_fresh
+                        and merge_state == "MERGE_ACCEPT"
+                        and merge_risk < threshold
+                    )
+                    if accepted and merge_updated_at > self.merge_last_accept_update:
+                        self.merge_last_accept_update = float(merge_updated_at)
+                        self.merge_accept_count += 1
+                        if self.merge_accept_count >= int(
+                            self.merge_cfg.get("accept_confirm_frames", 3)
+                        ):
+                            self.merge_stop_latched = False
+                            self.merge_accept_count = 0
+                            self.merge_last_accept_update = 0.0
+                    elif not accepted:
+                        self.merge_accept_count = 0
+                        self.merge_last_accept_update = 0.0
 
-            if zone_active:
-                for item in self.merge_cfg.get("risk_speed_caps", []):
-                    try:
-                        threshold = float(item["min_risk"])
-                        cap = float(item["cap_kmh"])
-                    except Exception:
-                        continue
+                if self.merge_stop_latched:
+                    merge_stop = True
+                    target_speed = 0.0
+                    reasons.append("merge_risk_stop")
+                    merge_state = "MERGE_STOP_HOLD"
+                elif not merge_fresh:
+                    # No perception: do not treat absent camera data as safe.
+                    merge_stop = True
+                    target_speed = 0.0
+                    reasons.append("merge_vision_wait")
+                    merge_state = "MERGE_VISION_WAIT"
 
-                    if merge_risk >= threshold:
-                        if cap < target_speed:
-                            target_speed = cap
-                            reasons.append(f"merge_risk_{merge_risk:.2f}")
-                        break
-
+        # Traffic and merge may both request braking. Never override traffic
+        # stop or V7 steering here; only constrain the final speed target.
         return {
             "target_speed_kmh": max(0.0, target_speed),
             "steering": max(-1.0, min(1.0, steering)),
@@ -360,4 +404,7 @@ class MissionManager:
             "merge_state": merge_state,
             "merge_risk": merge_risk,
             "merge_fresh": merge_fresh,
+            "merge_zone": merge_zone,
+            "merge_stop": merge_stop,
+            "merge_accept_count": self.merge_accept_count,
         }
