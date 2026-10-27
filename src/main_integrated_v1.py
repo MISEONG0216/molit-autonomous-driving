@@ -190,7 +190,7 @@ def main():
     print(f"[TRAFFIC] {'ON' if args.traffic else 'OFF'} / stops={stop_indices}")
     if args.traffic:
         print("[TRAFFIC] 60m: <=30km/h / 25m: <=12km/h / 10m: <=4km/h")
-        print("[TRAFFIC BRAKE] RED or UNKNOWN at <=3m: accel=0 / brake=1")
+        print("[TRAFFIC BRAKE] RED or UNKNOWN at <=0.5m: accel=0 / brake=1")
         print("[TRAFFIC GO] 8 fresh consecutive GO packets required to release")
     print(
         f"[MERGE] {'ON' if args.merge else 'OFF'} / "
