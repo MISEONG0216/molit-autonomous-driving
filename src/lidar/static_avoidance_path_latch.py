@@ -47,7 +47,11 @@ class AvoidancePathLatch:
         safety_margin_m=0.4,
         min_obstacle_width_m=0.6,
         min_obstacle_height_m=0.2,
+        avoidance_speed_kmh=8.0,
     ):
+        if not math.isfinite(avoidance_speed_kmh) or not 0 < avoidance_speed_kmh <= 25:
+            raise ValueError("avoidance_speed_kmh must be >0 and <=25")
+        self.avoidance_speed_kmh = float(avoidance_speed_kmh)
         self.global_path = prepare_path(global_path)
         self.vehicle_width_m = float(vehicle_width_m)
         self.safety_margin_m = float(safety_margin_m)
@@ -182,7 +186,8 @@ class AvoidancePathLatch:
                 ), "STOP_REQUIRED_PATH_BLOCKED"
 
         latched = PlanResult(
-            "AVOIDING", self.path.copy(), self.obstacle_id, self.side, 8.0,
+            "AVOIDING", self.path.copy(), self.obstacle_id, self.side,
+            self.avoidance_speed_kmh,
             "Original avoidance path locked until geometric release",
         )
         # A fresh raw STOP from a different object is not itself a reason to
