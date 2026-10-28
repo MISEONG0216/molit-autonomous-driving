@@ -88,7 +88,8 @@ def open_log():
         "static_avoid_side", "static_path_points", "static_active",
         "static_stop", "static_detected", "static_scan",
         "static_in_zone", "static_route_locked", "static_worker_wp",
-        "static_latch_state",
+        "static_latch_state", "traffic_green_bypass_620",
+        "traffic_green_count_620",
     ])
     return path, f, w
 
@@ -533,6 +534,8 @@ def main():
                 int(static_in_zone), int(static_route_engaged),
                 static_plan["waypoint_index"] if static_fresh else "",
                 static_plan["latch_state"] if static_fresh else "",
+                int(mission["second_green_bypass"]),
+                mission["second_green_count"],
             ])
 
             print("\033[2J\033[H", end="")
@@ -577,7 +580,9 @@ def main():
                 f"TRAFFIC CTRL: {mission['traffic_state']} / "
                 f"RED={mission['red_latched']} / "
                 f"GO={mission['go_release_count']} / "
-                f"LEFT_OVERRIDE={mission['left_arrow_override']}"
+                f"LEFT_OVERRIDE={mission['left_arrow_override']} / "
+                f"GREEN_BYPASS_620={mission['second_green_bypass']} / "
+                f"GREEN_COUNT_620={mission['second_green_count']}"
             )
             stop_dist = mission["stop_distance_m"]
             print(
