@@ -315,7 +315,6 @@ class MissionManager:
                     if second_green_bypass:
                         # Confirmed green at WP620: remove ONLY this signal's
                         # speed caps. V7, merge and static limits still apply.
-                        traffic_state = "APPROACH_GREEN_RELEASE_620"
                         reasons.append("traffic_green_release_620")
                     else:
                         traffic_approach = True
@@ -330,7 +329,7 @@ class MissionManager:
                     approach_cap = None
 
                 if second_green_bypass:
-                    pass  # traffic_state already reflects green-pass approval
+                    traffic_state = "APPROACH_GREEN_RELEASE_620"
                 elif not traffic_approach:
                     traffic_state = "VISION_WAIT" if not fresh else self.signal
                 elif not fresh:
