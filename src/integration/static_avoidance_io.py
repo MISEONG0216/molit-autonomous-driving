@@ -15,6 +15,24 @@ STATUSES = frozenset(("CLEAR", "AVOIDING", "STOP_REQUIRED"))
 MAX_PATH_POINTS = 400
 LOCAL_PATH_LOOKAHEAD_M = 2.5
 LOCAL_PATH_SEARCH_SIZE = 80
+MAX_STATIC_AVOIDANCE_SPEED_KMH = 25.0
+
+
+def configured_avoidance_speed_kmh(static_cfg):
+    """Single shared config validator used by main and independent worker.
+
+    This is a commanded target/cap, not proof that the vehicle reaches
+    the speed or can avoid an obstacle safely at that speed.
+    """
+    if "avoidance_speed_kmh" not in static_cfg:
+        raise ValueError("static.avoidance_speed_kmh is required")
+    try:
+        speed = float(static_cfg["avoidance_speed_kmh"])
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Invalid static.avoidance_speed_kmh") from exc
+    if not math.isfinite(speed) or not 0.0 < speed <= MAX_STATIC_AVOIDANCE_SPEED_KMH:
+        raise ValueError("static.avoidance_speed_kmh must be >0 and <=25")
+    return speed
 
 
 def parse_static_message(raw):
