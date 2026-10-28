@@ -29,7 +29,8 @@ from lidar_receiver import LidarReceiver
 from object_detection.object_detector import ObjectDetector
 from object_detection.tracker import ObjectTracker
 from obstacle_adapter import tracked_list_to_planner_obstacles
-from static_obstacle_planner import StaticObstaclePlanner
+from static_obstacle_planner import StaticObstaclePlanner, PlanResult, nearest_index
+from integration.static_zone import load_static_zones, in_static_zone
 from static_avoidance_path_latch import AvoidancePathLatch
 
 NETWORK_FILE = ROOT / "config" / "integration_network.json"
@@ -77,6 +78,8 @@ def main():
 
     with NETWORK_FILE.open("r", encoding="utf-8") as f:
         network = json.load(f)
+    with (ROOT / "config" / "integration_missions.json").open("r", encoding="utf-8") as f:
+        missions = json.load(f)
     lidar_cfg = network.get("lidar", {"bind_ip": "0.0.0.0", "port": 1116})
     pose_cfg = network.get("static_pose", {"bind_ip": "127.0.0.1", "port": 9302})
     result_cfg = network.get("static_result", {"bind_ip": "127.0.0.1", "port": 9303})
@@ -89,6 +92,7 @@ def main():
     if path.shape[1] == 2:
         path = np.column_stack((path, np.zeros(len(path))))
     path = path[:, :3]
+    static_zones = load_static_zones(missions.get("static", {}), len(path))
 
     planner = StaticObstaclePlanner(path, str(PLANNER_FILE))
     latch = AvoidancePathLatch(
@@ -125,7 +129,8 @@ def main():
     writer.writerow([
         "scan", "ego_x", "ego_y", "raw_status", "status", "latch_state",
         "objects", "tracked", "obstacle_id", "avoid_side", "path_points",
-        "recommended_kmh",
+        "recommended_kmh", "waypoint_index", "in_static_zone",
+        "latch_active", "static_zone_active",
     ])
 
     pose = None
@@ -135,7 +140,9 @@ def main():
     last_scan_timestamp = None
     scan_count = 0
     previous_status = None
+    planning_was_enabled = False
 
+    print("[STATIC ZONES] " + str(static_zones))
     print("[STATIC WORKER] LiDAR -> detect -> track -> local path -> UDP result")
     print("[CONTROL] No EgoCtrlCmd sender in this process.")
     print(f"[LIDAR] {lidar_ip}:{lidar_port}")
@@ -180,19 +187,52 @@ def main():
             previous_scan_timestamp = stamp
 
             ego_x, ego_y, ego_yaw = pose
-            forward, left, delta_yaw = delta_ego(previous_pose, pose)
-            previous_pose = pose
-            vehicle_points = lidar_to_vehicle(points)
-            obstacles, _, _ = detector.detect(vehicle_points)
-            tracked = tracker.update(
-                obstacles, dt, delta_x=forward, delta_y=left, delta_yaw=delta_yaw
-            )
-            planner_obstacles = tracked_list_to_planner_obstacles(
-                tracked, ego_x=ego_x, ego_y=ego_y, ego_yaw=ego_yaw, confidence=1.0
-            )
-            raw_plan = planner.plan(ego_x=ego_x, ego_y=ego_y, obstacles=planner_obstacles)
-            plan, latch_state = latch.apply(raw_plan, ego_x, ego_y, obstacles=planner_obstacles)
-
+            waypoint_index = nearest_index(path, ego_x, ego_y)
+            inside_zone = in_static_zone(waypoint_index, static_zones)
+            # Keep a route accepted inside the zone until geometric release.
+            planner_enabled = bool(inside_zone or latch.active)
+            if not planner_enabled:
+                # Suppress detection, tracking and path generation elsewhere.
+                obstacles, tracked = [], []
+                raw_plan = PlanResult(
+                    "CLEAR", np.empty((0, 3)), None, None, 0.0,
+                    "Outside static mission zone",
+                )
+                plan, latch_state = raw_plan, "ZONE_OFF"
+                previous_pose = None
+            else:
+                if not planning_was_enabled:
+                    tracker = ObjectTracker(
+                        max_match_distance=1.0, velocity_window_size=5,
+                        dynamic_speed_threshold=0.5, dynamic_confirm_frames=3,
+                        max_missed_frames=3,
+                    )
+                    previous_pose = None
+                forward, left, delta_yaw = delta_ego(previous_pose, pose)
+                previous_pose = pose
+                vehicle_points = lidar_to_vehicle(points)
+                obstacles, _, _ = detector.detect(vehicle_points)
+                tracked = tracker.update(
+                    obstacles, dt, delta_x=forward, delta_y=left, delta_yaw=delta_yaw
+                )
+                planner_obstacles = tracked_list_to_planner_obstacles(
+                    tracked, ego_x=ego_x, ego_y=ego_y, ego_yaw=ego_yaw, confidence=1.0
+                )
+                raw_plan = planner.plan(
+                    ego_x=ego_x, ego_y=ego_y, obstacles=planner_obstacles
+                )
+                plan, latch_state = latch.apply(
+                    raw_plan, ego_x, ego_y, obstacles=planner_obstacles
+                )
+                # Never accept a brand-new avoidance path after exiting zone.
+                if not inside_zone and not latch.active:
+                    raw_plan = PlanResult(
+                        "CLEAR", np.empty((0, 3)), None, None, 0.0,
+                        "Outside static mission zone",
+                    )
+                    plan, latch_state = raw_plan, "ZONE_OFF"
+            planning_was_enabled = planner_enabled
+            zone_active = bool(inside_zone or latch.active)
             status = plan.status
             selected_path = []
             if status == "AVOIDING":
@@ -211,6 +251,10 @@ def main():
                 "latch_state": latch_state,
                 "scan": scan_count,
                 "detected": len(obstacles),
+                "waypoint_index": waypoint_index,
+                "in_static_zone": bool(inside_zone),
+                "latch_active": bool(latch.active),
+                "zone_active": zone_active,
             }
             data = json.dumps(packet, separators=(",", ":"), allow_nan=False).encode("utf-8")
             if len(data) > 60000:
@@ -222,13 +266,16 @@ def main():
                 raw_plan.status, status, latch_state,
                 len(obstacles), len(tracked), plan.obstacle_id, plan.avoidance_side,
                 len(selected_path), plan.recommended_speed_kph,
+                waypoint_index, int(inside_zone), int(latch.active),
+                int(zone_active),
             ])
             logfile.flush()
             if (status, latch_state) != previous_status:
                 print(
                     f"[STATIC] scan={scan_count} {raw_plan.status} -> {status} "
                     f"latch={latch_state} objects={len(obstacles)} "
-                    f"track={len(tracked)} side={plan.avoidance_side} "
+                    f"track={len(tracked)} wp={waypoint_index} "
+                    f"zone={inside_zone} side={plan.avoidance_side} "
                     f"path={len(selected_path)}"
                 )
                 previous_status = (status, latch_state)
