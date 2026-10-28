@@ -36,6 +36,7 @@ def parse_pedestrian_message(raw):
     base = {
         "valid": False, "status": "UNKNOWN", "risk": 0.0,
         "person_count": 0, "frame": -1, "decision": "UNKNOWN",
+        "waypoint_index": None,
     }
     if not raw or len(raw) > 2048:
         return base
@@ -48,9 +49,12 @@ def parse_pedestrian_message(raw):
             return base
         risk = float(value["risk"])
         count, frame = value["person_count"], value["frame"]
+        waypoint_index = value["waypoint_index"]
         if (not math.isfinite(risk) or not 0.0 <= risk <= 1.0
                 or type(count) is not int or not 0 <= count <= 1000
-                or type(frame) is not int or frame < 0):
+                or type(frame) is not int or frame < 0
+                or type(waypoint_index) is not int
+                or not 0 <= waypoint_index < 4430):
             return base
         decision = value.get("decision")
         if (status == "STOP_REQUIRED" and decision != "EMERGENCY_STOP") or (
@@ -59,6 +63,7 @@ def parse_pedestrian_message(raw):
         return {
             "valid": True, "status": status, "risk": risk,
             "person_count": count, "frame": frame, "decision": decision,
+            "waypoint_index": waypoint_index,
         }
     except (ValueError, TypeError, KeyError, UnicodeError, AttributeError):
         return base
