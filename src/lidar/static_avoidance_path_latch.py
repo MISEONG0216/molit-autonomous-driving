@@ -10,6 +10,11 @@ import numpy as np
 
 from static_obstacle_planner import PlanResult
 
+# Kept exactly equal to the validated 5-km/h source constants.
+AVOIDANCE_RELEASE_TOLERANCE_M = 0.15
+AVOIDANCE_RELEASE_BUFFER_POINTS = 3
+CLEAR_RELEASE_SCAN_COUNT = 10
+
 class AvoidancePathLatch:
     def __init__(self, global_path):
         self.global_path = prepare_path(global_path)
