@@ -212,9 +212,8 @@ def main():
     static_updated_at = 0.0
     static_cfg = missions.get("static", {})
     static_timeout_sec = float(static_cfg.get("result_timeout_sec", 3.5))
-    # 10-km/h trial: original LiDAR source supports 10-km/h test speeds.
-    # Planner's lower recommended speed (8 km/h) still limits AVOIDING.
-    # Do not allow V7's 57 km/h profile to remove this trial cap.
+    # This cap applies ONLY while tracking a LiDAR local avoidance path.
+    # CLEAR uses the existing V7 global speed profile unmodified.
     static_speed_limit = min(
         10.0, max(0.1, float(static_cfg.get("test_max_speed_kmh", 10.0)))
     )
@@ -244,7 +243,7 @@ def main():
     print(
         f"[STATIC] {'ON' if args.static else 'OFF'} / "
         f"control={'ON' if args.static_control else 'OBSERVE'} / "
-        f"test_cap={static_speed_limit:.1f}km/h / timeout={static_timeout_sec:.1f}s"
+        f"avoid_cap={static_speed_limit:.1f}km/h / CLEAR=V7 speed profile / timeout={static_timeout_sec:.1f}s"
     )
     if args.static:
         print(f"[STATIC POSE] {pose_target}")
@@ -378,12 +377,13 @@ def main():
             static_active = False
             static_stop = False
             if args.static_control:
-                # Controlled integration run stays below the configured 10km/h limit
-                # everywhere; we will tune up only after live validation.
-                target_speed_kmh = min(target_speed_kmh, static_speed_limit)
+                # CLEAR: keep V7's global-path speed profile (up to --max-speed).
+                # AVOIDING: use the low-speed local path cap and planner speed.
+                # Missing/stale LiDAR result or STOP_REQUIRED: stop.
                 if not static_fresh or static_state == "STOP_REQUIRED":
                     static_stop = True
                 elif static_state == "AVOIDING":
+                    target_speed_kmh = min(target_speed_kmh, static_speed_limit)
                     local_pp = local_path_pure_pursuit(
                         static_plan["path"], current_x, current_y, yaw,
                         base.VEHICLE_LENGTH,
