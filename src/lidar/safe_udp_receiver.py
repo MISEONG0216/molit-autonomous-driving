@@ -40,11 +40,15 @@ class Receiver:
                 continue
             obj = self.data_class()
             ctypes.memmove(ctypes.addressof(obj), raw_data, len(raw_data))
-            try:
-                obj.parsing()
-            except Exception as exc:
-                print(f'[UDP PARSING WARNING] {type(exc).__name__}: {exc}')
-                continue
+            # GPS defines parsing(); IMU is a plain ctypes structure.
+            # Only invoke parsing when the sensor class implements it.
+            parser = getattr(obj, 'parsing', None)
+            if callable(parser):
+                try:
+                    parser()
+                except Exception as exc:
+                    print(f'[UDP PARSING WARNING] {type(exc).__name__}: {exc}')
+                    continue
             with self.lock:
                 self.parsed_data = obj
 
