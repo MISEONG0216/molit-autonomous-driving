@@ -57,16 +57,16 @@
   },
   "static": {
     "result_timeout_sec": 3.5,
-    "test_max_speed_kmh": 5,
     "source_branch": "lidar_object_detection",
     "source_file": "src/lidar/lidar_static_avoidance_drive_5kph.py",
-    "note": "Static planning only inside avoidance_zones_wp (unless an accepted local path is still latched). Outside zone, V7 profile runs without static fail-stop. Inside zone or during an accepted avoidance path, stale LiDAR and STOP_REQUIRED still stop.",
+    "note": "Static local-avoidance speed target/cap: 25 km/h, only in the designated static mission WP590-760 or while a path started there remains latched. CLEAR follows the existing V7 profile (up to 57 km/h), traffic logic unchanged; STOP_REQUIRED or stale active sensor still brakes. Transition from 57 km/h at a 15 m obstacle trigger has not been validated.",
     "avoidance_zones_wp": [
       [
         590,
         760
       ]
     ],
-    "zone_note": "Provisional from Oct 28 run: designated static obstacle was avoided WP635-697; false avoidance WP862-921 and WP1270-1323. Confirm exact scenario start/end against MORAI before competition."
+    "zone_note": "Provisional from Oct 28 run: designated static obstacle was avoided WP635-697; false avoidance WP862-921 and WP1270-1323. Confirm exact scenario start/end against MORAI before competition.",
+    "avoidance_speed_kmh": 25
   }
 }
