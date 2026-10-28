@@ -74,14 +74,14 @@
   "dynamic_pedestrian": {
     "zones_wp": [
       [
-        340,
-        575
+        430,
+        580
       ]
     ],
     "result_timeout_sec": 3.5,
     "stop_risk_threshold": 0.5,
     "clear_confirm_frames": 3,
-    "zone_note": "PROVISIONAL map/log estimate: green '신호등 & 동적 장애물' is before static WP590-760. Verify actual pedestrian spawn waypoint in MORAI before competition.",
+    "zone_note": "PROVISIONAL from supplied map and WP trace: pedestrian zone between first STOP WP414 and second STOP WP620, independent of static mission WP590-760. Confirm exact pedestrian spawn boundaries in MORAI.",
     "note": "Observe forward camera YOLO person(0) + MiDaS risk from provided script; stop in zone when risk>=0.50. No direct controls from vision worker. Fail stop on missing/stale results while active. Other detected COCO vehicle classes are display-only."
   }
 }
