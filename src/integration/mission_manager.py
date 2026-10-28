@@ -23,6 +23,10 @@ class MissionManager:
         self.red_latched = False
         self.go_release_count = 0
         self._last_go_counted_update = 0.0
+        # WP620 green-pass confirmation uses distinct fresh camera packets.
+        # Keep this separate from the 8-packet release of a RED stop latch.
+        self.second_green_count = 0
+        self.second_green_last_update = 0.0
         self.hold_stop_index = None
         self.completed_stop_indices = set()
         self.path_s = None
@@ -183,6 +187,35 @@ class MissionManager:
         self.go_release_count = 0
         self._last_go_counted_update = 0.0
 
+    def _update_second_green_bypass(self, now, active_stop, distance_m):
+        """Confirm straight green only near WP620 before lifting approach caps.
+
+        Only distinct newly received GO packets count. Any stale, STOP, or
+        UNKNOWN input immediately clears permission. The RED latch always
+        has priority and cannot be released by this shortcut.
+        """
+        override = self.traffic_cfg.get("stop_overrides", {}).get("620", {})
+        confirm_packets = int(override.get("green_release_confirm_packets", 0))
+        gate_m = float(override.get("green_release_start_distance_m", 0.0))
+        permitted = (
+            confirm_packets > 0
+            and active_stop == 620
+            and distance_m is not None
+            and 0.0 <= distance_m <= gate_m
+            and self._signal_fresh(now)
+            and self.signal == "GO"
+            and not self.red_latched
+        )
+        if not permitted:
+            self.second_green_count = 0
+            self.second_green_last_update = 0.0
+            return False
+
+        if self.signal_last_update > self.second_green_last_update:
+            self.second_green_count += 1
+            self.second_green_last_update = self.signal_last_update
+        return self.second_green_count >= confirm_packets
+
     @staticmethod
     def _in_any_zone(index, zones):
         for zone in zones or []:
@@ -224,6 +257,7 @@ class MissionManager:
         stop_distance_m = None
         full_brake = False
         traffic_approach = False
+        second_green_bypass = False
         if traffic_enabled:
             active_stop, stop_distance_m = self._next_stop(
                 int(nearest_index)
@@ -232,6 +266,9 @@ class MissionManager:
                 now, active_stop, stop_distance_m, int(nearest_index)
             )
             fresh = self._signal_fresh(now)
+            second_green_bypass = self._update_second_green_bypass(
+                now, active_stop, stop_distance_m
+            )
             left_turn_stops = {
                 int(i) for i in self.traffic_cfg.get("left_turn_stops", [])
             }
@@ -275,18 +312,26 @@ class MissionManager:
                 near_m = override.get("near_distance_m")
                 near_cap = override.get("near_speed_kmh")
                 if stop_distance_m <= approach_m:
-                    traffic_approach = True
-                    target_speed = min(target_speed, approach_cap)
-                    if (
-                        near_m is not None and near_cap is not None
-                        and stop_distance_m <= float(near_m)
-                    ):
-                        target_speed = min(target_speed, float(near_cap))
+                    if second_green_bypass:
+                        # Confirmed green at WP620: remove ONLY this signal's
+                        # speed caps. V7, merge and static limits still apply.
+                        traffic_state = "APPROACH_GREEN_RELEASE_620"
+                        reasons.append("traffic_green_release_620")
+                    else:
+                        traffic_approach = True
+                        target_speed = min(target_speed, approach_cap)
+                        if (
+                            near_m is not None and near_cap is not None
+                            and stop_distance_m <= float(near_m)
+                        ):
+                            target_speed = min(target_speed, float(near_cap))
                 else:
                     # Outside the configured approach, preserve V7 speed.
                     approach_cap = None
 
-                if not traffic_approach:
+                if second_green_bypass:
+                    pass  # traffic_state already reflects green-pass approval
+                elif not traffic_approach:
                     traffic_state = "VISION_WAIT" if not fresh else self.signal
                 elif not fresh:
                     traffic_state = f"APPROACH_VISION_WAIT_{active_stop}"
@@ -396,6 +441,8 @@ class MissionManager:
             "stop_distance_m": stop_distance_m,
             "traffic_full_brake": full_brake,
             "traffic_approach": traffic_approach,
+            "second_green_bypass": second_green_bypass,
+            "second_green_count": self.second_green_count,
             "red_latched": self.red_latched,
             "left_arrow_override": bool(
                 traffic_enabled and fresh and left_override
