@@ -70,5 +70,18 @@
     ],
     "zone_note": "Provisional from Oct 28 run: designated static obstacle was avoided WP635-697; false avoidance WP862-921 and WP1270-1323. Confirm exact scenario start/end against MORAI before competition.",
     "avoidance_speed_kmh": 25
+  },
+  "dynamic_pedestrian": {
+    "zones_wp": [
+      [
+        340,
+        575
+      ]
+    ],
+    "result_timeout_sec": 3.5,
+    "stop_risk_threshold": 0.5,
+    "clear_confirm_frames": 3,
+    "zone_note": "PROVISIONAL map/log estimate: green '신호등 & 동적 장애물' is before static WP590-760. Verify actual pedestrian spawn waypoint in MORAI before competition.",
+    "note": "Observe forward camera YOLO person(0) + MiDaS risk from provided script; stop in zone when risk>=0.50. No direct controls from vision worker. Fail stop on missing/stale results while active. Other detected COCO vehicle classes are display-only."
   }
 }
