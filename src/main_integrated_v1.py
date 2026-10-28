@@ -35,6 +35,7 @@ from integration.mission_io import (
 )
 from integration.mission_manager import MissionManager
 from integration.static_avoidance_io import parse_static_message, local_path_pure_pursuit
+from integration.static_zone import load_static_zones, in_static_zone
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -83,6 +84,8 @@ def open_log():
         "static_state", "static_age_sec", "static_obstacle_id",
         "static_avoid_side", "static_path_points", "static_active",
         "static_stop", "static_detected", "static_scan",
+        "static_in_zone", "static_route_locked", "static_worker_wp",
+        "static_latch_state",
     ])
     return path, f, w
 
@@ -113,7 +116,7 @@ def main():
     parser.add_argument("--static", action="store_true",
                         help="observe/log independent LiDAR static plans")
     parser.add_argument("--static-control", action="store_true",
-                        help="apply static avoidance: 5km/h max, fail-stop on stale data")
+                        help="static avoidance in configured WP zones; fail-stop while active")
     parser.add_argument("--max-speed", type=float, default=57.0)
     args = parser.parse_args()
 
@@ -211,6 +214,8 @@ def main():
     static_plan = parse_static_message(None)
     static_updated_at = 0.0
     static_cfg = missions.get("static", {})
+    static_zones = load_static_zones(static_cfg, len(global_path))
+    static_route_engaged = False  # Hold fail-stop beyond zone until latch releases.
     static_timeout_sec = float(static_cfg.get("result_timeout_sec", 3.5))
     # This cap applies ONLY while tracking a LiDAR local avoidance path.
     # CLEAR uses the existing V7 global speed profile unmodified.
@@ -246,6 +251,7 @@ def main():
         f"avoid_cap={static_speed_limit:.1f}km/h / CLEAR=V7 speed profile / timeout={static_timeout_sec:.1f}s"
     )
     if args.static:
+        print(f"[STATIC ZONES WP] {static_zones}; outside=V7 only")
         print(f"[STATIC POSE] {pose_target}")
         print(f"[STATIC RESULT] {network['static_result']}")
     print(f"[LOG] {log_path}")
@@ -372,16 +378,30 @@ def main():
             static_fresh = bool(
                 static_plan["valid"] and static_age <= static_timeout_sec
             )
-            static_state = ("OFF" if not args.static else
-                            static_plan["status"] if static_fresh else "VISION_WAIT")
+            static_in_zone = in_static_zone(nearest_index, static_zones)
+            # A route accepted in-zone keeps LiDAR fail-stop protection until
+            # the worker reports geometric release, even past the zone end.
+            if args.static and static_fresh:
+                static_route_engaged = bool(static_plan["latch_active"])
+            static_required = bool(static_in_zone or static_route_engaged)
+            static_state = (
+                "OFF" if not args.static else
+                "ZONE_OFF" if not static_required else
+                static_plan["status"] if static_fresh else "VISION_WAIT"
+            )
             static_active = False
             static_stop = False
-            if args.static_control:
-                # CLEAR: keep V7's global-path speed profile (up to --max-speed).
-                # AVOIDING: use the low-speed local path cap and planner speed.
-                # Missing/stale LiDAR result or STOP_REQUIRED: stop.
-                if not static_fresh or static_state == "STOP_REQUIRED":
+            if args.static_control and static_required:
+                # CLEAR: V7 speed. AVOIDING: low-speed locked local route.
+                # STOP, stale result, or mismatched zone: full brake.
+                if (
+                    not static_fresh
+                    or not static_plan["zone_active"]
+                    or static_state == "STOP_REQUIRED"
+                ):
                     static_stop = True
+                    if static_fresh and not static_plan["zone_active"]:
+                        static_state = "ZONE_MISMATCH"
                 elif static_state == "AVOIDING":
                     target_speed_kmh = min(target_speed_kmh, static_speed_limit)
                     local_pp = local_path_pure_pursuit(
@@ -509,6 +529,9 @@ def main():
                 int(static_stop),
                 static_plan["detected"] if static_fresh else 0,
                 static_plan["scan"] if static_fresh else 0,
+                int(static_in_zone), int(static_route_engaged),
+                static_plan["waypoint_index"] if static_fresh else "",
+                static_plan["latch_state"] if static_fresh else "",
             ])
 
             print("\033[2J\033[H", end="")
@@ -574,6 +597,7 @@ def main():
                 f"age={static_age:.2f}s / "
                 f"CTRL={'ON' if args.static_control else 'OBSERVE'} / "
                 f"PATH={len(static_plan['path']) if static_fresh else 0} / "
+                f"ZONE={static_in_zone} / LOCK={static_route_engaged} / "
                 f"AVOID={static_active} / STOP={static_stop} / "
                 f"OBJ={static_plan['obstacle_id'] if static_fresh else None}"
             )
