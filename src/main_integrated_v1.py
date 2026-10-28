@@ -34,7 +34,10 @@ from integration.mission_io import (
     parse_traffic_message,
 )
 from integration.mission_manager import MissionManager
-from integration.static_avoidance_io import parse_static_message, local_path_pure_pursuit
+from integration.static_avoidance_io import (
+    parse_static_message, local_path_pure_pursuit,
+    configured_avoidance_speed_kmh,
+)
 from integration.static_zone import load_static_zones, in_static_zone
 
 
@@ -217,11 +220,9 @@ def main():
     static_zones = load_static_zones(static_cfg, len(global_path))
     static_route_engaged = False  # Hold fail-stop beyond zone until latch releases.
     static_timeout_sec = float(static_cfg.get("result_timeout_sec", 3.5))
-    # This cap applies ONLY while tracking a LiDAR local avoidance path.
-    # CLEAR uses the existing V7 global speed profile unmodified.
-    static_speed_limit = min(
-        10.0, max(0.1, float(static_cfg.get("test_max_speed_kmh", 10.0)))
-    )
+    # Same speed request as the LiDAR worker/planner/path latch.
+    # CLEAR continues using the existing V7 speed profile unchanged.
+    static_speed_limit = configured_avoidance_speed_kmh(static_cfg)
 
     print("====================================================")
     print(" V7 + TRAFFIC + MERGE INTEGRATION V1")
