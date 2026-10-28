@@ -15,6 +15,7 @@ import argparse
 import csv
 import json
 import math
+import socket
 import time
 from datetime import datetime
 from pathlib import Path
@@ -33,6 +34,7 @@ from integration.mission_io import (
     parse_traffic_message,
 )
 from integration.mission_manager import MissionManager
+from integration.static_avoidance_io import parse_static_message, local_path_pure_pursuit
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -78,6 +80,9 @@ def open_log():
         "traffic_stop_index", "traffic_stop_distance_m",
         "traffic_full_brake", "traffic_approach", "traffic_left_override",
         "merge_zone", "merge_stop", "merge_accept_count",
+        "static_state", "static_age_sec", "static_obstacle_id",
+        "static_avoid_side", "static_path_points", "static_active",
+        "static_stop", "static_detected", "static_scan",
     ])
     return path, f, w
 
@@ -105,11 +110,17 @@ def main():
         action="store_true",
         help="test only: treat the whole path as merge zone",
     )
+    parser.add_argument("--static", action="store_true",
+                        help="observe/log independent LiDAR static plans")
+    parser.add_argument("--static-control", action="store_true",
+                        help="apply static avoidance: 5km/h max, fail-stop on stale data")
     parser.add_argument("--max-speed", type=float, default=57.0)
     args = parser.parse_args()
 
     if args.merge_control and not args.merge:
         parser.error("--merge-control requires --merge")
+    if args.static_control and not args.static:
+        parser.error("--static-control requires --static")
     if args.max_speed <= 0.0 or args.max_speed > 57.0:
         parser.error("--max-speed must be >0 and <=57")
 
@@ -161,6 +172,22 @@ def main():
             int(network["merge_result"]["port"]),
         )
 
+    # Only this main loop transmits EgoCtrlCmd. The LiDAR worker receives a
+    # localhost pose feed and returns a plan/status; it never owns GPS/IMU.
+    static_rx = None
+    pose_tx = None
+    pose_target = None
+    if args.static:
+        static_rx = LatestUdpTextReceiver(
+            network["static_result"]["bind_ip"],
+            int(network["static_result"]["port"]), max_size=64000,
+        )
+        pose_tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        pose_target = (
+            network["static_pose"]["bind_ip"],
+            int(network["static_pose"]["port"]),
+        )
+
     mission_manager = MissionManager(
         missions.get("traffic", {}),
         missions.get("merge", {}),
@@ -181,6 +208,14 @@ def main():
     traffic_updated_at = 0.0
     merge = parse_merge_message(None)
     merge_updated_at = 0.0
+    static_plan = parse_static_message(None)
+    static_updated_at = 0.0
+    static_cfg = missions.get("static", {})
+    static_timeout_sec = float(static_cfg.get("result_timeout_sec", 3.5))
+    # Preserve the original 5-km/h avoidance test limit, even if V7 = 57.
+    static_speed_limit = min(
+        5.0, max(0.1, float(static_cfg.get("test_max_speed_kmh", 5.0)))
+    )
 
     print("====================================================")
     print(" V7 + TRAFFIC + MERGE INTEGRATION V1")
@@ -204,6 +239,14 @@ def main():
         f"[MORAI CTRL] {network['control']['target_ip']}:"
         f"{network['control']['port']}"
     )
+    print(
+        f"[STATIC] {'ON' if args.static else 'OFF'} / "
+        f"control={'ON' if args.static_control else 'OBSERVE'} / "
+        f"test_cap={static_speed_limit:.1f}km/h / timeout={static_timeout_sec:.1f}s"
+    )
+    if args.static:
+        print(f"[STATIC POSE] {pose_target}")
+        print(f"[STATIC RESULT] {network['static_result']}")
     print(f"[LOG] {log_path}")
 
     try:
@@ -226,6 +269,12 @@ def main():
                 if raw is not None:
                     merge = parse_merge_message(raw)
                     merge_updated_at = updated_at
+
+            if static_rx is not None:
+                raw, updated_at, is_new = static_rx.poll()
+                if raw is not None and is_new:
+                    static_plan = parse_static_message(raw)
+                    static_updated_at = updated_at
 
             gps_data = gps_receiver.get_data()
             gps_data.parsing()
@@ -256,6 +305,12 @@ def main():
                 imu_data.ori_z,
                 imu_data.ori_w,
             )
+
+            if pose_tx is not None:
+                pose_tx.sendto(
+                    json.dumps({"x": current_x, "y": current_y, "yaw": yaw}).encode("ascii"),
+                    pose_target,
+                )
 
             current_speed_kmh, speed_valid = speed_receiver.read()
             if not speed_valid:
@@ -306,6 +361,43 @@ def main():
             target_speed_kmh = mission["target_speed_kmh"]
             steering = mission["steering"]
 
+            static_age = (
+                now - static_updated_at if static_updated_at > 0.0 else float("inf")
+            )
+            static_fresh = bool(
+                static_plan["valid"] and 0.0 <= static_age <= static_timeout_sec
+            )
+            static_state = ("OFF" if not args.static else
+                            static_plan["status"] if static_fresh else "VISION_WAIT")
+            static_active = False
+            static_stop = False
+            if args.static_control:
+                # First integration run stays at the source code's 5km/h limit
+                # everywhere; we will tune up only after live validation.
+                target_speed_kmh = min(target_speed_kmh, static_speed_limit)
+                if not static_fresh or static_state == "STOP_REQUIRED":
+                    static_stop = True
+                elif static_state == "AVOIDING":
+                    local_pp = local_path_pure_pursuit(
+                        static_plan["path"], current_x, current_y, yaw,
+                        base.VEHICLE_LENGTH,
+                    )
+                    if local_pp is None:
+                        static_stop = True
+                        static_state = "LOCAL_PATH_LOST"
+                    else:
+                        static_active = True
+                        steering = float(local_pp["steering"])
+                        target_speed_kmh = min(
+                            target_speed_kmh,
+                            float(static_plan["recommended_speed_kmh"]),
+                        )
+                if static_stop:
+                    target_speed_kmh = 0.0
+                    mission["reasons"].append("static_stop_or_stale")
+                elif static_active:
+                    mission["reasons"].append("static_local_avoidance")
+
             (
                 desired_accel,
                 desired_brake,
@@ -316,7 +408,7 @@ def main():
                 current_speed_kmh,
             )
 
-            if result is None:
+            if result is None and not static_active:
                 desired_accel = 0.0
                 desired_brake = base.PATH_LOST_BRAKE_CMD
                 control_zone = "PATH_LOST"
@@ -326,19 +418,21 @@ def main():
 
             if (args.traffic and mission["traffic_full_brake"]) or (
                 args.merge_control and mission["merge_stop"]
-            ):
+            ) or (args.static_control and static_stop):
                 # Traffic or merge STOP: zero throttle and immediate full brake.
                 command_limiter.reset()
                 accel_cmd, brake_cmd, signed_cmd = 0.0, 1.0, -1.0
                 control_zone = (
                     "TRAFFIC_FULL_BRAKE"
                     if args.traffic and mission["traffic_full_brake"]
-                    else "MERGE_FULL_BRAKE"
+                    else "MERGE_FULL_BRAKE" if args.merge_control and mission["merge_stop"]
+                    else "STATIC_FULL_BRAKE"
                 )
             elif (
                 (
                     (args.traffic and mission["traffic_approach"])
                     or (args.merge_control and mission["merge_zone"])
+                    or args.static_control
                 )
                 and current_speed_kmh > target_speed_kmh + 0.8
             ):
@@ -400,6 +494,15 @@ def main():
                 int(mission["merge_zone"]),
                 int(mission["merge_stop"]),
                 mission["merge_accept_count"],
+                static_state,
+                f"{static_age:.3f}" if math.isfinite(static_age) else "inf",
+                static_plan["obstacle_id"] if static_fresh else "",
+                static_plan["avoidance_side"] if static_fresh else "",
+                len(static_plan["path"]) if static_fresh else 0,
+                int(static_active),
+                int(static_stop),
+                static_plan["detected"] if static_fresh else 0,
+                static_plan["scan"] if static_fresh else 0,
             ])
 
             print("\033[2J\033[H", end="")
@@ -461,6 +564,14 @@ def main():
                 f"SAFE={mission['merge_accept_count']}"
             )
             print(
+                f"STATIC      : {static_state} / "
+                f"age={static_age:.2f}s / "
+                f"CTRL={'ON' if args.static_control else 'OBSERVE'} / "
+                f"PATH={len(static_plan['path']) if static_fresh else 0} / "
+                f"AVOID={static_active} / STOP={static_stop} / "
+                f"OBJ={static_plan['obstacle_id'] if static_fresh else None}"
+            )
+            print(
                 f"MISSION     : {mission['reasons'] or ['base_v7']}"
             )
             print("CMD MODE    : ctrl_mode=2 / cmd_type=1")
@@ -493,6 +604,10 @@ def main():
             traffic_rx.close()
         if merge_rx is not None:
             merge_rx.close()
+        if static_rx is not None:
+            static_rx.close()
+        if pose_tx is not None:
+            pose_tx.close()
         log_file.flush()
         log_file.close()
         print(f"[LOG SAVED] {log_path}")
