@@ -91,7 +91,13 @@ def main():
     path = path[:, :3]
 
     planner = StaticObstaclePlanner(path, str(PLANNER_FILE))
-    latch = AvoidancePathLatch(path)
+    latch = AvoidancePathLatch(
+        path,
+        vehicle_width_m=planner.cfg["vehicle_width_m"],
+        safety_margin_m=planner.cfg["safety_margin_m"],
+        min_obstacle_width_m=planner.cfg.get("min_static_obstacle_width_m", 0.0),
+        min_obstacle_height_m=planner.cfg.get("min_static_obstacle_height_m", 0.0),
+    )
     detector = ObjectDetector(
         ground_z_threshold=-1.70,
         dbscan_eps=0.5, dbscan_min_samples=5,
@@ -185,7 +191,7 @@ def main():
                 tracked, ego_x=ego_x, ego_y=ego_y, ego_yaw=ego_yaw, confidence=1.0
             )
             raw_plan = planner.plan(ego_x=ego_x, ego_y=ego_y, obstacles=planner_obstacles)
-            plan, latch_state = latch.apply(raw_plan, ego_x, ego_y)
+            plan, latch_state = latch.apply(raw_plan, ego_x, ego_y, obstacles=planner_obstacles)
 
             status = plan.status
             selected_path = []
