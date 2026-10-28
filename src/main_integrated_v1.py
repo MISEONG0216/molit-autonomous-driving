@@ -39,6 +39,10 @@ from integration.static_avoidance_io import (
     configured_avoidance_speed_kmh,
 )
 from integration.static_zone import load_static_zones, in_static_zone
+from integration.dynamic_pedestrian_io import (
+    load_dynamic_zones, in_dynamic_zone,
+    parse_pedestrian_message, PedestrianStopLatch,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -90,6 +94,9 @@ def open_log():
         "static_in_zone", "static_route_locked", "static_worker_wp",
         "static_latch_state", "traffic_green_bypass_620",
         "traffic_green_count_620",
+        "pedestrian_zone", "pedestrian_state", "pedestrian_risk",
+        "pedestrian_count", "pedestrian_stop", "pedestrian_age_sec",
+        "pedestrian_frame", "pedestrian_clear_count",
     ])
     return path, f, w
 
@@ -121,6 +128,10 @@ def main():
                         help="observe/log independent LiDAR static plans")
     parser.add_argument("--static-control", action="store_true",
                         help="static avoidance in configured WP zones; fail-stop while active")
+    parser.add_argument("--pedestrian", action="store_true",
+                        help="observe camera pedestrian risk only in configured dynamic WP zone")
+    parser.add_argument("--pedestrian-control", action="store_true",
+                        help="stop on pedestrian risk or stale results only in dynamic WP zone")
     parser.add_argument("--max-speed", type=float, default=57.0)
     args = parser.parse_args()
 
@@ -128,6 +139,10 @@ def main():
         parser.error("--merge-control requires --merge")
     if args.static_control and not args.static:
         parser.error("--static-control requires --static")
+    if args.pedestrian_control and not args.pedestrian:
+        parser.error("--pedestrian-control requires --pedestrian")
+    if args.pedestrian and not args.traffic:
+        parser.error("--pedestrian requires --traffic and the 9291 camera relay")
     if args.max_speed <= 0.0 or args.max_speed > 57.0:
         parser.error("--max-speed must be >0 and <=57")
 
@@ -195,6 +210,30 @@ def main():
             int(network["static_pose"]["port"]),
         )
 
+    # Camera 9291 remains owned by the traffic detector. The independent
+    # pedestrian worker receives relayed images and only sends a decision.
+    pedestrian_rx = None
+    pedestrian_gate_tx = None
+    pedestrian_gate_target = None
+    pedestrian_cfg = missions.get("dynamic_pedestrian", {})
+    pedestrian_zones = load_dynamic_zones(pedestrian_cfg, len(global_path))
+    pedestrian_timeout_sec = float(pedestrian_cfg.get("result_timeout_sec", 3.5))
+    if not 0 < pedestrian_timeout_sec <= 30:
+        raise ValueError("Invalid dynamic_pedestrian.result_timeout_sec")
+    pedestrian_latch = PedestrianStopLatch(
+        int(pedestrian_cfg.get("clear_confirm_frames", 3))
+    )
+    if args.pedestrian:
+        pedestrian_rx = LatestUdpTextReceiver(
+            network["pedestrian_result"]["bind_ip"],
+            int(network["pedestrian_result"]["port"]), max_size=2048,
+        )
+        gate_cfg = network["pedestrian_gate"]
+        if gate_cfg["bind_ip"] != "127.0.0.1":
+            raise RuntimeError("Pedestrian gate must be localhost")
+        pedestrian_gate_target = ("127.0.0.1", int(gate_cfg["port"]))
+        pedestrian_gate_tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
     mission_manager = MissionManager(
         missions.get("traffic", {}),
         missions.get("merge", {}),
@@ -224,6 +263,10 @@ def main():
     # Same speed request as the LiDAR worker/planner/path latch.
     # CLEAR continues using the existing V7 speed profile unchanged.
     static_speed_limit = configured_avoidance_speed_kmh(static_cfg)
+    pedestrian_result = parse_pedestrian_message(None)
+    pedestrian_updated_at = 0.0
+    pedestrian_was_in_zone = False
+    pedestrian_zone_entered_at = 0.0
 
     print("====================================================")
     print(" V7 + TRAFFIC + MERGE INTEGRATION V1")
@@ -251,6 +294,11 @@ def main():
         f"[STATIC] {'ON' if args.static else 'OFF'} / "
         f"control={'ON' if args.static_control else 'OBSERVE'} / "
         f"avoid_cap={static_speed_limit:.1f}km/h / CLEAR=V7 speed profile / timeout={static_timeout_sec:.1f}s"
+    )
+    print(
+        f"[PEDESTRIAN] {'ON' if args.pedestrian else 'OFF'} "
+        f"CTRL={'ON' if args.pedestrian_control else 'OBSERVE'} "
+        f"zones={pedestrian_zones} timeout={pedestrian_timeout_sec:.1f}s"
     )
     if args.static:
         print(f"[STATIC ZONES WP] {static_zones}; outside=V7 only")
@@ -284,6 +332,13 @@ def main():
                 if raw is not None and is_new:
                     static_plan = parse_static_message(raw)
                     static_updated_at = updated_at
+
+            pedestrian_new_result = False
+            if pedestrian_rx is not None:
+                ped_raw, ped_updated_at, pedestrian_new_result = pedestrian_rx.poll()
+                if ped_raw is not None and pedestrian_new_result:
+                    pedestrian_result = parse_pedestrian_message(ped_raw)
+                    pedestrian_updated_at = ped_updated_at
 
             gps_data = gps_receiver.get_data()
             gps_data.parsing()
@@ -332,6 +387,18 @@ def main():
                 current_x,
                 current_y,
             )
+            pedestrian_in_zone = in_dynamic_zone(nearest_index, pedestrian_zones)
+            if pedestrian_gate_tx is not None:
+                pedestrian_gate_tx.sendto(
+                    json.dumps({"waypoint_index": nearest_index}).encode("ascii"),
+                    pedestrian_gate_target,
+                )
+            if pedestrian_in_zone and not pedestrian_was_in_zone:
+                pedestrian_zone_entered_at = time.time()
+                pedestrian_latch.reset()
+            elif not pedestrian_in_zone and pedestrian_was_in_zone:
+                pedestrian_latch.reset()
+            pedestrian_was_in_zone = pedestrian_in_zone
             nearest_x = global_path[nearest_index, 0]
             nearest_y = global_path[nearest_index, 1]
             nearest_distance = math.hypot(
@@ -369,6 +436,38 @@ def main():
 
             target_speed_kmh = mission["target_speed_kmh"]
             steering = mission["steering"]
+
+            pedestrian_age = (
+                max(0.0, time.time() - pedestrian_updated_at)
+                if pedestrian_updated_at > 0 else float("inf")
+            )
+            pedestrian_fresh = bool(
+                pedestrian_result["valid"]
+                and pedestrian_updated_at >= pedestrian_zone_entered_at
+                and pedestrian_age <= pedestrian_timeout_sec
+                and pedestrian_result.get("waypoint_index") is not None
+                and in_dynamic_zone(
+                    pedestrian_result["waypoint_index"], pedestrian_zones
+                )
+            )
+            if args.pedestrian and pedestrian_in_zone:
+                pedestrian_latch.update(
+                    pedestrian_result, pedestrian_new_result, pedestrian_fresh,
+                )
+            pedestrian_state = (
+                "OFF" if not args.pedestrian else
+                "ZONE_OFF" if not pedestrian_in_zone else
+                "VISION_WAIT" if not pedestrian_fresh else
+                "STOP_REQUIRED" if pedestrian_latch.latched else
+                pedestrian_result["status"]
+            )
+            pedestrian_stop = bool(
+                args.pedestrian_control and pedestrian_in_zone
+                and (not pedestrian_fresh or pedestrian_latch.latched)
+            )
+            if pedestrian_stop:
+                target_speed_kmh = 0.0
+                mission["reasons"].append("pedestrian_stop_or_stale")
 
             # UDP poll() can timestamp a new packet a few milliseconds
             # after loop_start ("now"). Do not flag a fresh plan as stale
@@ -446,15 +545,16 @@ def main():
 
             if (args.traffic and mission["traffic_full_brake"]) or (
                 args.merge_control and mission["merge_stop"]
-            ) or (args.static_control and static_stop):
-                # Traffic or merge STOP: zero throttle and immediate full brake.
+            ) or (args.static_control and static_stop) or pedestrian_stop:
+                # Any mission STOP commands full brake from main.
                 command_limiter.reset()
                 accel_cmd, brake_cmd, signed_cmd = 0.0, 1.0, -1.0
                 control_zone = (
                     "TRAFFIC_FULL_BRAKE"
                     if args.traffic and mission["traffic_full_brake"]
                     else "MERGE_FULL_BRAKE" if args.merge_control and mission["merge_stop"]
-                    else "STATIC_FULL_BRAKE"
+                    else "STATIC_FULL_BRAKE" if args.static_control and static_stop
+                    else "PEDESTRIAN_FULL_BRAKE"
                 )
             elif (
                 (
@@ -536,6 +636,13 @@ def main():
                 static_plan["latch_state"] if static_fresh else "",
                 int(mission["second_green_bypass"]),
                 mission["second_green_count"],
+                int(pedestrian_in_zone), pedestrian_state,
+                (f"{pedestrian_result['risk']:.3f}" if pedestrian_fresh else ""),
+                pedestrian_result["person_count"] if pedestrian_fresh else "",
+                int(pedestrian_stop),
+                f"{pedestrian_age:.3f}" if math.isfinite(pedestrian_age) else "inf",
+                pedestrian_result["frame"] if pedestrian_fresh else "",
+                pedestrian_latch.clear_count,
             ])
 
             print("\033[2J\033[H", end="")
@@ -608,6 +715,12 @@ def main():
                 f"OBJ={static_plan['obstacle_id'] if static_fresh else None}"
             )
             print(
+                f"PEDESTRIAN  : {pedestrian_state} / ZONE={pedestrian_in_zone} "
+                f"/ RISK={pedestrian_result['risk'] if pedestrian_fresh else None} "
+                f"/ PERSON={pedestrian_result['person_count'] if pedestrian_fresh else 0} "
+                f"/ STOP={pedestrian_stop} / age={pedestrian_age:.2f}s"
+            )
+            print(
                 f"MISSION     : {mission['reasons'] or ['base_v7']}"
             )
             print("CMD MODE    : ctrl_mode=2 / cmd_type=1")
@@ -644,6 +757,10 @@ def main():
             static_rx.close()
         if pose_tx is not None:
             pose_tx.close()
+        if pedestrian_rx is not None:
+            pedestrian_rx.close()
+        if pedestrian_gate_tx is not None:
+            pedestrian_gate_tx.close()
         log_file.flush()
         log_file.close()
         print(f"[LOG SAVED] {log_path}")
