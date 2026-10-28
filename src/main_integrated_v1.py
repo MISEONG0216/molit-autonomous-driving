@@ -361,11 +361,15 @@ def main():
             target_speed_kmh = mission["target_speed_kmh"]
             steering = mission["steering"]
 
+            # UDP poll() can timestamp a new packet a few milliseconds
+            # after loop_start ("now"). Do not flag a fresh plan as stale
+            # merely because its calculated age is slightly negative.
             static_age = (
-                now - static_updated_at if static_updated_at > 0.0 else float("inf")
+                max(0.0, time.time() - static_updated_at)
+                if static_updated_at > 0.0 else float("inf")
             )
             static_fresh = bool(
-                static_plan["valid"] and 0.0 <= static_age <= static_timeout_sec
+                static_plan["valid"] and static_age <= static_timeout_sec
             )
             static_state = ("OFF" if not args.static else
                             static_plan["status"] if static_fresh else "VISION_WAIT")
