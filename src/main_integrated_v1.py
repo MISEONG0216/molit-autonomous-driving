@@ -212,9 +212,11 @@ def main():
     static_updated_at = 0.0
     static_cfg = missions.get("static", {})
     static_timeout_sec = float(static_cfg.get("result_timeout_sec", 3.5))
-    # Preserve the original 5-km/h avoidance test limit, even if V7 = 57.
+    # 10-km/h trial: original LiDAR source supports 10-km/h test speeds.
+    # Planner's lower recommended speed (8 km/h) still limits AVOIDING.
+    # Do not allow V7's 57 km/h profile to remove this trial cap.
     static_speed_limit = min(
-        5.0, max(0.1, float(static_cfg.get("test_max_speed_kmh", 5.0)))
+        10.0, max(0.1, float(static_cfg.get("test_max_speed_kmh", 10.0)))
     )
 
     print("====================================================")
@@ -376,7 +378,7 @@ def main():
             static_active = False
             static_stop = False
             if args.static_control:
-                # First integration run stays at the source code's 5km/h limit
+                # Controlled integration run stays below the configured 10km/h limit
                 # everywhere; we will tune up only after live validation.
                 target_speed_kmh = min(target_speed_kmh, static_speed_limit)
                 if not static_fresh or static_state == "STOP_REQUIRED":
