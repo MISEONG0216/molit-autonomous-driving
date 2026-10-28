@@ -373,7 +373,23 @@ def main():
         action="store_true",
         help="verified stopping position에서 정지선 화면 y비율을 1회 보정/저장",
     )
+    parser.add_argument(
+        "--relay-pedestrian", action="store_true",
+        help="forward camera datagrams to localhost pedestrian worker without second 9291 subscriber",
+    )
     args = parser.parse_args()
+
+    relay_sock = None
+    relay_target = None
+    if args.relay_pedestrian:
+        with open(os.path.join(CONFIG_DIR, "integration_network.json"), "r", encoding="utf-8") as f:
+            network = json.load(f)
+        relay_cfg = network["pedestrian_camera_relay"]
+        if relay_cfg["bind_ip"] != "127.0.0.1":
+            raise ValueError("Pedestrian camera relay must remain on localhost")
+        relay_target = ("127.0.0.1", int(relay_cfg["port"]))
+        relay_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        print(f"[PED RELAY] 9291 camera datagrams -> {relay_target}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[INFO] device={device}")
@@ -438,6 +454,11 @@ def main():
                 continue
 
             for packet in packets:
+                if relay_sock is not None:
+                    try:
+                        relay_sock.sendto(packet, relay_target)
+                    except OSError as exc:
+                        print(f"[PED RELAY WARN] {exc}")
                 jpeg_buffer += packet
 
             if len(jpeg_buffer) > 2 * 1024 * 1024:
@@ -767,6 +788,8 @@ def main():
         decision_sock.sendto(b"UNKNOWN|-1.0000|0.00", decision_target)
         camera_sock.close()
         decision_sock.close()
+        if relay_sock is not None:
+            relay_sock.close()
         cv2.destroyAllWindows()
 
 
