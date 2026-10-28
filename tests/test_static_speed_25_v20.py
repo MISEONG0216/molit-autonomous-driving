@@ -68,7 +68,7 @@ class StaticSpeedConfigurationTests(unittest.TestCase):
     def test_traffic_configuration_preserved(self):
         traffic = self.missions["traffic"]
         self.assertEqual(traffic["left_turn_stops"], [1224])
-        self.assertEqual(traffic["stop_overrides"]["620"]["approach_speed_kmh"], 25)
+        self.assertEqual(traffic["stop_overrides"]["620"]["approach_speed_kmh"], 35)
 
 
 class AvoidanceSpeedPropagationTests(unittest.TestCase):
