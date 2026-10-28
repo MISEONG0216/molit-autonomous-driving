@@ -18,6 +18,8 @@ from pathlib import Path
 
 import numpy as np
 
+from integration.dynamic_pedestrian_io import load_dynamic_zones, in_dynamic_zone
+
 ROOT = Path(__file__).resolve().parents[1]
 NETWORK = ROOT / "config" / "integration_network.json"
 MISSION = ROOT / "config" / "integration_missions.json"
@@ -89,12 +91,12 @@ class JpegStreamAssembler:
             self.buffer += packet
             if len(self.buffer) > self.max_buffer:
                 # Preserve a possible partial latest frame.
-                start = self.buffer.rfind(b"\\xff\\xd8")
+                start = self.buffer.rfind(bytes((255, 216)))
                 self.buffer = self.buffer[start:] if start >= 0 else b""
-        end = self.buffer.rfind(b"\\xff\\xd9")
+        end = self.buffer.rfind(bytes((255, 217)))
         if end < 0:
             return None
-        start = self.buffer.rfind(b"\\xff\\xd8", 0, end)
+        start = self.buffer.rfind(bytes((255, 216)), 0, end)
         if start < 0 or start >= end:
             self.buffer = self.buffer[end + 2:]
             return None
@@ -120,7 +122,9 @@ def main():
         mission = json.load(f)["dynamic_pedestrian"]
     in_cfg = network["pedestrian_camera_relay"]
     out_cfg = network["pedestrian_result"]
-    if in_cfg["bind_ip"] != "127.0.0.1" or out_cfg["bind_ip"] != "127.0.0.1":
+    gate_cfg = network["pedestrian_gate"]
+    zones = load_dynamic_zones(mission, 4430)
+    if any(cfg["bind_ip"] != "127.0.0.1" for cfg in (in_cfg, out_cfg, gate_cfg)):
         raise RuntimeError("Pedestrian worker sockets must stay on localhost")
     threshold = float(mission.get("stop_risk_threshold", 0.50))
     if not 0 < threshold <= 1:
@@ -141,6 +145,9 @@ def main():
     cam.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8 * 1024 * 1024)
     cam.bind(("127.0.0.1", int(in_cfg["port"])))
     cam.settimeout(0.25)
+    gate = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    gate.bind(("127.0.0.1", int(gate_cfg["port"])))
+    gate.setblocking(False)
     output = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     target = ("127.0.0.1", int(out_cfg["port"]))
     assembler = JpegStreamAssembler()
@@ -149,11 +156,46 @@ def main():
     prev_bbox_areas = []
     last_report = None
     last_wait_log = 0.0
+    last_gate_time = 0.0
+    last_gate_wp = None
+    previously_enabled = False
+    print(f"[PEDESTRIAN ZONE] {zones} -- inference only when inside")
+    print(f"[PEDESTRIAN GATE] localhost:{gate_cfg['port']} from main")
     print(f"[PEDESTRIAN] relayed camera 127.0.0.1:{in_cfg['port']}")
     print(f"[PEDESTRIAN] risk decision -> {target}, threshold={threshold:.2f}")
     print("[CONTROL] No EgoCtrlCmd sender in this process.")
     try:
         while True:
+            # Main owns waypoint calculations. The worker may evaluate a
+            # pedestrian only inside the designated mission range.
+            while True:
+                try:
+                    raw_gate, _ = gate.recvfrom(512)
+                except BlockingIOError:
+                    break
+                try:
+                    payload = json.loads(raw_gate.decode("ascii"))
+                    wp = payload.get("waypoint_index")
+                    if type(wp) is int and 0 <= wp < 4430:
+                        last_gate_wp = wp
+                        last_gate_time = time.monotonic()
+                except (ValueError, UnicodeError, TypeError, AttributeError):
+                    pass
+            enabled = bool(
+                last_gate_wp is not None
+                and time.monotonic() - last_gate_time <= 1.0
+                and in_dynamic_zone(last_gate_wp, zones)
+            )
+            if enabled != previously_enabled:
+                assembler.buffer = b""
+                prev_bbox_areas = []
+                depth_cache = None
+                print(
+                    f"[PEDESTRIAN] ZONE {'ON' if enabled else 'OFF'}"
+                    f" wp={last_gate_wp}"
+                )
+            previously_enabled = enabled
+
             try:
                 first, _ = cam.recvfrom(65535)
             except socket.timeout:
@@ -173,6 +215,10 @@ def main():
                     break
             cam.settimeout(0.25)
 
+            # Outside the mission, drop camera packets without inference
+            # or a stop request. This also avoids consuming GPU/CPU cycles.
+            if not enabled:
+                continue
             jpeg = assembler.feed(packets)
             if jpeg is None:
                 continue
@@ -260,6 +306,7 @@ def main():
                 "risk": round(max_person_risk, 4),
                 "person_count": persons,
                 "frame": frame_number,
+                "waypoint_index": last_gate_wp,
             }
             output.sendto(
                 json.dumps(packet, separators=(",", ":")).encode("utf-8"),
@@ -284,6 +331,7 @@ def main():
         print("[PEDESTRIAN] Interrupted")
     finally:
         cam.close()
+        gate.close()
         output.close()
         if args.show:
             cv2.destroyAllWindows()
