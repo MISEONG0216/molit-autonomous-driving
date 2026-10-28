@@ -71,9 +71,15 @@ def smoothstep5(t: np.ndarray) -> np.ndarray:
 class StaticObstaclePlanner:
     """Produces a local path only. It never sends Accel/Brake/Steer."""
 
-    def __init__(self, global_path: np.ndarray, config_file: str):
+    def __init__(
+        self, global_path: np.ndarray, config_file: str,
+        avoidance_speed_kph: float = 8.0,
+    ):
         self.path = global_path
         self.s = cumulative_s(global_path)
+        if not math.isfinite(avoidance_speed_kph) or not 0 < avoidance_speed_kph <= 25.0:
+            raise ValueError("avoidance_speed_kph must be >0 and <=25")
+        self.avoidance_speed_kph = float(avoidance_speed_kph)
         with open(config_file, "r", encoding="utf-8") as f:
             self.cfg = json.load(f)
 
@@ -265,7 +271,7 @@ class StaticObstaclePlanner:
             local_path,
             obs.id,
             "LEFT" if offset > 0.0 else "RIGHT",
-            8.0,
+            self.avoidance_speed_kph,
             "Collision-free mock avoidance path generated",
             candidate_diagnostics,
         )
