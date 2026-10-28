@@ -9,10 +9,10 @@
     "approach_brake_max_cmd": 0.5,
     "stop_overrides": {
       "620": {
-        "approach_distance_m": 100,
-        "approach_speed_kmh": 25,
-        "near_distance_m": 35,
-        "near_speed_kmh": 10
+        "approach_distance_m": 65,
+        "approach_speed_kmh": 35,
+        "near_distance_m": 25,
+        "near_speed_kmh": 20
       },
       "1224": {
         "approach_distance_m": 35,
