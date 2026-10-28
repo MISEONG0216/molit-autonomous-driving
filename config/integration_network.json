@@ -42,5 +42,9 @@
   "pedestrian_result": {
     "bind_ip": "127.0.0.1",
     "port": 9304
+  },
+  "pedestrian_gate": {
+    "bind_ip": "127.0.0.1",
+    "port": 9306
   }
 }
