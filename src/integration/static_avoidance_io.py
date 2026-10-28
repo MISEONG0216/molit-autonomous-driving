@@ -28,6 +28,10 @@ def parse_static_message(raw):
         "latch_state": "",
         "scan": 0,
         "detected": 0,
+        "zone_active": False,
+        "latch_active": False,
+        "in_static_zone": False,
+        "waypoint_index": None,
     }
     if not raw or len(raw) > 64000:
         return result
@@ -58,7 +62,17 @@ def parse_static_message(raw):
         speed = float(value.get("recommended_speed_kmh", 0.0))
         if not math.isfinite(speed) or speed < 0:
             return result
+        for flag in ("zone_active", "latch_active", "in_static_zone"):
+            if flag in value and type(value[flag]) is not bool:
+                return result
+        worker_wp = value.get("waypoint_index")
+        if worker_wp is not None and (type(worker_wp) is not int or worker_wp < 0):
+            return result
         result.update(
+            zone_active=value.get("zone_active", False),
+            latch_active=value.get("latch_active", False),
+            in_static_zone=value.get("in_static_zone", False),
+            waypoint_index=worker_wp,
             valid=True,
             status=status,
             path=path,
