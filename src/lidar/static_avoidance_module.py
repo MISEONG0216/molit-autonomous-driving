@@ -31,6 +31,7 @@ from object_detection.tracker import ObjectTracker
 from obstacle_adapter import tracked_list_to_planner_obstacles
 from static_obstacle_planner import StaticObstaclePlanner, PlanResult, nearest_index
 from integration.static_zone import load_static_zones, in_static_zone
+from integration.static_avoidance_io import configured_avoidance_speed_kmh
 from static_avoidance_path_latch import AvoidancePathLatch
 
 NETWORK_FILE = ROOT / "config" / "integration_network.json"
@@ -92,15 +93,20 @@ def main():
     if path.shape[1] == 2:
         path = np.column_stack((path, np.zeros(len(path))))
     path = path[:, :3]
-    static_zones = load_static_zones(missions.get("static", {}), len(path))
+    static_cfg = missions.get("static", {})
+    static_zones = load_static_zones(static_cfg, len(path))
+    avoidance_speed_kmh = configured_avoidance_speed_kmh(static_cfg)
 
-    planner = StaticObstaclePlanner(path, str(PLANNER_FILE))
+    planner = StaticObstaclePlanner(
+        path, str(PLANNER_FILE), avoidance_speed_kph=avoidance_speed_kmh
+    )
     latch = AvoidancePathLatch(
         path,
         vehicle_width_m=planner.cfg["vehicle_width_m"],
         safety_margin_m=planner.cfg["safety_margin_m"],
         min_obstacle_width_m=planner.cfg.get("min_static_obstacle_width_m", 0.0),
         min_obstacle_height_m=planner.cfg.get("min_static_obstacle_height_m", 0.0),
+        avoidance_speed_kmh=avoidance_speed_kmh,
     )
     detector = ObjectDetector(
         ground_z_threshold=-1.70,
@@ -143,6 +149,7 @@ def main():
     planning_was_enabled = False
 
     print("[STATIC ZONES] " + str(static_zones))
+    print(f"[STATIC AVOID SPEED] {avoidance_speed_kmh:.1f} km/h")
     print("[STATIC WORKER] LiDAR -> detect -> track -> local path -> UDP result")
     print("[CONTROL] No EgoCtrlCmd sender in this process.")
     print(f"[LIDAR] {lidar_ip}:{lidar_port}")
