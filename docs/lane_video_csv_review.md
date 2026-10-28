@@ -118,6 +118,16 @@ it is not the lane boundary or a 3-second penalty trigger. To change it:
 python scripts\review_lane_csv.py --csv logs\integrated_v1_20261028_211500.csv --threshold 0.5
 ```
 
+To save an aligned chart (CTE, speed, steering, heading error):
+
+```bat
+python scripts\\plot_lane_csv.py --csv logs\\integrated_v1_20261028_211500.csv
+python scripts\\plot_lane_csv.py --csv logs\\integrated_v1_20261028_211500.csv --start 44 --end 48
+```
+
+These create PNG files in the logs folder. Video and chart can be compared
+using the same CSV elapsed seconds shown in the terminal.
+
 `signed_cte_m` always measures deviation from the supplied global path,
 including when the controller intentionally follows a LOCAL_AVOIDANCE path.
 Do not call those samples a lane violation without video evidence.
