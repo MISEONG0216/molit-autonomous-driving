@@ -60,6 +60,13 @@
     "test_max_speed_kmh": 5,
     "source_branch": "lidar_object_detection",
     "source_file": "src/lidar/lidar_static_avoidance_drive_5kph.py",
-    "note": "First integrated static-obstacle drive is limited to 5 km/h, including CLEAR. All EgoCtrlCmd owned by main."
+    "note": "Static planning only inside avoidance_zones_wp (unless an accepted local path is still latched). Outside zone, V7 profile runs without static fail-stop. Inside zone or during an accepted avoidance path, stale LiDAR and STOP_REQUIRED still stop.",
+    "avoidance_zones_wp": [
+      [
+        590,
+        760
+      ]
+    ],
+    "zone_note": "Provisional from Oct 28 run: designated static obstacle was avoided WP635-697; false avoidance WP862-921 and WP1270-1323. Confirm exact scenario start/end against MORAI before competition."
   }
 }
