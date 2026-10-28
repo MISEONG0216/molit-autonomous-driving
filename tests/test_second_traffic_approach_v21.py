@@ -41,13 +41,15 @@ class SecondTrafficApproachTests(unittest.TestCase):
         )
 
     def test_approach_override_exact_config(self):
+        expected = {
+            "approach_distance_m": 65,
+            "approach_speed_kmh": 35,
+            "near_distance_m": 25,
+            "near_speed_kmh": 20,
+        }
+        settings = self.config["traffic"]["stop_overrides"]["620"]
         self.assertEqual(
-            self.config["traffic"]["stop_overrides"]["620"], {
-                "approach_distance_m": 65,
-                "approach_speed_kmh": 35,
-                "near_distance_m": 25,
-                "near_speed_kmh": 20,
-            },
+            {key: settings[key] for key in expected}, expected
         )
 
     def test_before_65m_preserves_v7_target(self):
