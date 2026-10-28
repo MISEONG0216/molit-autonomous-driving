@@ -30,7 +30,7 @@ for p in (SRC_DIR, LIDAR_DIR):
 
 from morai_common import ensure_morai_import_path, load_network_config
 ensure_morai_import_path()
-from lib.network.UDP import Receiver
+from safe_udp_receiver import Receiver
 from lib.define.GPS import GPS
 from lib.define.IMU import IMU
 from lidar_receiver import LidarReceiver
