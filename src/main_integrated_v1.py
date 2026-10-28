@@ -39,6 +39,7 @@ from integration.static_avoidance_io import (
     configured_avoidance_speed_kmh,
 )
 from integration.static_zone import load_static_zones, in_static_zone
+from integration.lane_diagnostics import path_tracking_metrics
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -89,6 +90,12 @@ def open_log():
         "static_stop", "static_detected", "static_scan",
         "static_in_zone", "static_route_locked", "static_worker_wp",
         "static_latch_state",
+        # Video-to-CSV synchronization and read-only lateral diagnostics.
+        "wall_time_local", "wall_time_epoch_s",
+        "signed_cte_m", "abs_cte_m", "path_heading_deg",
+        "heading_error_deg", "nearest_segment_wp", "curve_radius_m",
+        "v7_effective_lfd_m", "v7_steering_gain", "v7_target_wp",
+        "v7_switch_bias", "tracking_path_source",
     ])
     return path, f, w
 
@@ -338,6 +345,25 @@ def main():
                 nearest_y - current_y,
             )
 
+            # Measurement only: project onto nearby global-path segments.
+            # It does not change steering, speed, or the reference route.
+            try:
+                lane_metrics = path_tracking_metrics(
+                    global_path, nearest_index, current_x, current_y, yaw,
+                )
+            except ValueError:
+                lane_metrics = {
+                    "signed_cte_m": float("nan"),
+                    "abs_cte_m": float("nan"),
+                    "path_heading_deg": float("nan"),
+                    "heading_error_deg": float("nan"),
+                    "nearest_segment_index": -1,
+                }
+            curve_radius_m = (
+                float(radius_profile[nearest_index])
+                if len(radius_profile) > nearest_index else float("nan")
+            )
+
             result = base.calculate_pure_pursuit(
                 global_path,
                 nearest_index,
@@ -486,7 +512,30 @@ def main():
                     dt_control,
                 )
 
+            # Use one timestamp for both the visible video sync cue and CSV.
             elapsed = now - run_start
+            wall_time_local = datetime.fromtimestamp(now).astimezone().isoformat(
+                timespec="milliseconds"
+            )
+            v7_lfd_m = float(v7.v3._DIAG.get("effective_lfd_m", float("nan")))
+            v7_steer_gain = (
+                float(v7._DIAG.get("steering_gain", float("nan")))
+                if result is not None else float("nan")
+            )
+            v7_target_wp = (
+                int(v7._DIAG.get("selected_target_index", -1))
+                if result is not None else -1
+            )
+            v7_switch_bias = (
+                int(v7._DIAG.get("target_bias_active", 0))
+                if result is not None else 0
+            )
+            tracking_path_source = (
+                "LOCAL_AVOIDANCE" if static_active
+                else "STOP_REQUIRED" if static_stop
+                else "PATH_LOST" if result is None
+                else "GLOBAL_V7"
+            )
             log_writer.writerow([
                 f"{elapsed:.3f}",
                 nearest_index,
@@ -533,6 +582,15 @@ def main():
                 int(static_in_zone), int(static_route_engaged),
                 static_plan["waypoint_index"] if static_fresh else "",
                 static_plan["latch_state"] if static_fresh else "",
+                wall_time_local, f"{now:.3f}",
+                f"{lane_metrics['signed_cte_m']:+.4f}",
+                f"{lane_metrics['abs_cte_m']:.4f}",
+                f"{lane_metrics['path_heading_deg']:.3f}",
+                f"{lane_metrics['heading_error_deg']:+.3f}",
+                lane_metrics["nearest_segment_index"],
+                f"{curve_radius_m:.3f}", f"{v7_lfd_m:.3f}",
+                f"{v7_steer_gain:.3f}", v7_target_wp, v7_switch_bias,
+                tracking_path_source,
             ])
 
             print("\033[2J\033[H", end="")
@@ -545,7 +603,17 @@ def main():
             )
             print(f"YAW         : {math.degrees(yaw):.2f} deg")
             print(f"NEAREST     : {nearest_index}")
+            print(f"VIDEO SYNC  : {wall_time_local} / elapsed={elapsed:.2f}s")
             print(f"PATH DIST   : {nearest_distance:.3f} m")
+            print(
+                f"GLOBAL CTE  : {lane_metrics['signed_cte_m']:+.3f} m "
+                f"(+LEFT/-RIGHT) / heading_err={lane_metrics['heading_error_deg']:+.2f}deg"
+            )
+            print(
+                f"V7 LFD/GAIN : {v7_lfd_m:.2f} m / {v7_steer_gain:.2f} "
+                f"/ targetWP={v7_target_wp} / switch={v7_switch_bias}"
+            )
+            print(f"TRACK PATH  : {tracking_path_source} (CTE always vs global path)")
             print(f"BASE TARGET : {base_target:.2f} km/h")
             print(f"FINAL TARGET: {target_speed_kmh:.2f} km/h")
             print(f"COMP SPEED  : {current_speed_kmh:.2f} km/h")
