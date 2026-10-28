@@ -34,5 +34,13 @@
   "static_result": {
     "bind_ip": "127.0.0.1",
     "port": 9303
+  },
+  "pedestrian_camera_relay": {
+    "bind_ip": "127.0.0.1",
+    "port": 9305
+  },
+  "pedestrian_result": {
+    "bind_ip": "127.0.0.1",
+    "port": 9304
   }
 }
