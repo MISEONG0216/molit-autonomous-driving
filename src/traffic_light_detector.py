@@ -542,8 +542,14 @@ def main():
 
             # Separate per-frame left-arrow evidence from the top-scoring box.
             # A red lamp can score higher in the same traffic signal image.
+            # The NIA classifier has two left-bearing classes:
+            # greenleft (green arrow) and redleft (red + left-arrow lamp).
+            # redleft remains STOP as the ordinary signal; independent
+            # arrow evidence is gated to configured left-only intersections
+            # by MissionManager. Require >=5 / 7 processed frames to avoid
+            # releasing on a single misclassification.
             left_arrow_history.append(any(
-                item["label"] == "greenleft"
+                item["label"] in ("greenleft", "redleft")
                 and item["cls_conf"] >= 0.60
                 for item in candidates
             ))
@@ -646,9 +652,14 @@ def main():
             )
             decision_sock.sendto(message.encode("ascii"), decision_target)
 
-            if (stable_label, decision) != last_reported:
-                print(f"[VEHICLE SIGNAL] {stable_label} -> {decision} ({votes}/{len(signal_history)} votes)")
-                last_reported = (stable_label, decision)
+            if (stable_label, decision, stable_left_arrow) != last_reported:
+                print(
+                    f"[VEHICLE SIGNAL] {stable_label} -> {decision} "
+                    f"({votes}/{len(signal_history)} votes), "
+                    f"LEFT_ARROW={int(stable_left_arrow)} "
+                    f"({sum(left_arrow_history)}/{len(left_arrow_history)})"
+                )
+                last_reported = (stable_label, decision, stable_left_arrow)
 
             report_bucket = None if stable_y_ratio is None else round(stable_y_ratio, 2)
             if report_bucket != last_stopline_report:
