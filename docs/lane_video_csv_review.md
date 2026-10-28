@@ -121,8 +121,8 @@ python scripts\review_lane_csv.py --csv logs\integrated_v1_20261028_211500.csv -
 To save an aligned chart (CTE, speed, steering, heading error):
 
 ```bat
-python scripts\\plot_lane_csv.py --csv logs\\integrated_v1_20261028_211500.csv
-python scripts\\plot_lane_csv.py --csv logs\\integrated_v1_20261028_211500.csv --start 44 --end 48
+python scripts\plot_lane_csv.py --csv logs\integrated_v1_20261028_211500.csv
+python scripts\plot_lane_csv.py --csv logs\integrated_v1_20261028_211500.csv --start 44 --end 48
 ```
 
 These create PNG files in the logs folder. Video and chart can be compared
