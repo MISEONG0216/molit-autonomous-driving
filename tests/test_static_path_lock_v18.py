@@ -49,6 +49,21 @@ class LockedPathTests(unittest.TestCase):
         self.assertEqual(state, "LOCKED_NEW_PATH")
         self.assertTrue(self.latch.active)
 
+    def test_first_path_rejects_other_object_on_route(self):
+        global_path = np.column_stack((
+            np.arange(0.0, 101.0),
+            np.zeros(101),
+            np.zeros(101),
+        ))
+        fresh = AvoidancePathLatch(global_path)
+        stopped, state = fresh.apply(plan("AVOIDING", 184), 0, 2.5, [
+            obstacle(184, 20, 0), obstacle(195, 35, 2.5),
+        ])
+        self.assertEqual(stopped.status, "STOP_REQUIRED")
+        self.assertEqual(stopped.obstacle_id, 195)
+        self.assertEqual(state, "STOP_REQUIRED_PATH_BLOCKED")
+        self.assertTrue(fresh.active)
+
     def test_tracking_id_change_outside_path_does_not_stop(self):
         raw = plan("STOP_REQUIRED", 195)
         kept, state = self.latch.apply(raw, 10, 2.5, [
