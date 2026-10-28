@@ -138,6 +138,18 @@ class AvoidancePathLatch:
         if not self.active:
             if raw_plan_result.status == "AVOIDING":
                 self.start(raw_plan_result)
+                # The source planner checks the selected object only.
+                # Before trusting the first local path, verify ALL tracks.
+                if obstacles is not None:
+                    blocked = self._blocking_obstacle(
+                        ego_x, ego_y, 0, obstacles
+                    )
+                    if blocked is not None:
+                        return PlanResult(
+                            "STOP_REQUIRED", np.empty((0, 3), dtype=float),
+                            getattr(blocked, "id", None), self.side, 0.0,
+                            "Object blocks newly locked avoidance path",
+                        ), "STOP_REQUIRED_PATH_BLOCKED"
                 return raw_plan_result, "LOCKED_NEW_PATH"
             return raw_plan_result, "RAW"
 
