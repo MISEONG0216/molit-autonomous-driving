@@ -47,17 +47,37 @@ cd /d "%USERPROFILE%\molit-beomsu-test"
 ### CMD 3: main DRY-RUN (does not transmit vehicle control)
 ```bat
 cd /d "%USERPROFILE%\molit-beomsu-test"
-.\.venv\Scripts\python.exe src\main_integrated_v1.py --traffic --static --static-control --max-speed 30 --beomsu-first-right-m 0.25
+.\.venv\Scripts\python.exe src\main_integrated_v1.py --traffic --static --static-control --max-speed 30 --beomsu-first-right-m 0.25 --beomsu-roundabout-right-m 0.20 --beomsu-roundabout-kmh 12
 ```
 Ensure GPS, IMU, speed, camera and LiDAR feeds are valid. Ctrl+C to end **only CMD 3** after checking logs; leave the two workers running.
 
 ### CMD 3: controlled MORAI DRIVE (after verifying inputs and safety)
 ```bat
-.\.venv\Scripts\python.exe src\main_integrated_v1.py --drive --traffic --static --static-control --max-speed 30 --beomsu-first-right-m 0.25
+.\.venv\Scripts\python.exe src\main_integrated_v1.py --drive --traffic --static --static-control --max-speed 30 --beomsu-first-right-m 0.25 --beomsu-roundabout-right-m 0.20 --beomsu-roundabout-kmh 12
 ```
 No other driving code may be running. Supervise and stop on any guardrail/lane issue. `--max-speed 30` caps normal driving; the **first modified waypoint zone** is capped at 20 km/h whenever its right offset is nonzero. The V7 curve/mission speed may be lower. This does not detect yellow lane lines in real time. The tunnel area is **NOT automatically corrected**.
 
 Log: `logs/integrated_v1_YYYYMMDD_HHMMSS.csv`. Video + CSV WP comparison is needed to evaluate the fix. Set 0.25m only as the first experiment, not as a verified clearance value.
+
+## New experimental roundabout fine-tuning (2026-10-30)
+
+**IMG_5046.mp4** displays crossing of roundabout-exit painted guide/hatch markings around video t=54s and left yellow line close contact around t=57s. The visual recording is NOT timestamp-synchronized with a controller CSV; these video seconds are not waypoint indexes.
+
+This branch ports the **optional** previous V22 modules, based on V22 CSV runs `20261029_222543` and `20261029_225509`, which recorded repeatable left-of-reference-path deviation near WP1870-1885.
+
+- `--beomsu-roundabout-right-m 0.20`: a smooth 0→0.20m **rightward tracking-only shift** across WP1859→1870, held WP1870→1885, fades out by WP1902. This is a test hypothesis, not a verified marking clearance. The WP1480-1715 guardrail fix is untouched.
+- `--beomsu-roundabout-kmh 12`: **prebrake before** WP1835 using route-distance preview, hold up to 12km/h through WP1892, gradually release thereafter. The controller must actually track this target; verify real Competition Status speed.
+- Both switches **default OFF** so pre-existing commands and normal 30km/h path remain unchanged until explicitly opted in.
+- CSV appends `beomsu_roundabout_right_m`, `beomsu_roundabout_speed_cap_kmh` and `beomsu_roundabout_speed_zone` for review. Run offline geometry test:
+```bat
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_beomsu_roundabout.py" -v
+```
+
+### Tunnel approach remains UNMODIFIED
+
+**IMG_5047.mp4** shows left yellow marking close to the vehicle around t=15-18s, near the tunnel entrance. The video does not establish the exact WP corresponding to line contact nor reliable lane/wall clearance. No automatic lateral correction was enabled in the tunnel. V20 has **no safe GPS-shadow lane/LiDAR navigation**; earlier V34/V35 branches are experiments and must not be silently merged into V20. If GPS becomes invalid or steering behaves abnormally on entry, abort the drive, do not try to force passage with a guessed offset.
+
+Upload the matching local `logs/integrated_v1_*.csv` to map roundabout and tunnel video to actual WP and diagnose signed CTE, heading error, V7 lookahead and speed. GPS path CTE is not a physical tire-to-marking measurement.
 
 ## Critical limitations
 1. The camera and LiDAR do **not** currently provide real-time lane-line or guardrail bounds to this new offset function. It cannot enforce the competition's 3-second yellow-line rule. Absolute wheel-to-line distance must be measured from video or calibrated sensing.
