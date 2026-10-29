@@ -49,6 +49,7 @@ from integration.dynamic_pedestrian_io import (
 )
 from integration.gps_shadow_io import GpsShadowPose
 from integration.gps_shadow_lane import parse_lane_result
+from integration.shadow_tail_io import shadow_tail_steering
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -745,6 +746,18 @@ def main():
                             static_plan["path"], current_x, current_y, yaw,
                             base.VEHICLE_LENGTH,
                         )
+                        if local_pp is None and shadow_active:
+                            # At the end of a verified locked path there may
+                            # be no target >= original fixed 2.5m lookahead.
+                            # Use a shorter still-forward point, not one
+                            # behind the vehicle. Worker LiDAR clearance must
+                            # still be fresh and positively verified.
+                            local_pp = shadow_tail_steering(
+                                static_plan["path"], current_x, current_y, yaw,
+                                base.VEHICLE_LENGTH,
+                            )
+                            if local_pp is not None:
+                                mission["reasons"].append("shadow_tail_target")
                         if local_pp is None:
                             static_stop = True
                             static_state = "LOCAL_PATH_LOST"
