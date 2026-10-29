@@ -47,14 +47,22 @@ class BeomsuRoundaboutTests(unittest.TestCase):
         self.assertTrue(all(v == 30 for v in unchanged))
         self.assertTrue(all(z == "OFF" for z in zones_off))
         caps, zones = build_roundabout_speed_caps(self.path, 30, 12)
-        for i in range(1835, 1893):
+        for i in range(1770, 1903):
             self.assertAlmostEqual(caps[i], 12.0)
             self.assertEqual(zones[i], "HOLD")
-        self.assertGreater(caps[1800], caps[1820])
-        self.assertGreater(caps[1820], caps[1835])
-        self.assertLess(caps[1892], caps[1910])
+        self.assertGreater(caps[1730], caps[1770])
+        self.assertEqual(zones[1770], "HOLD")
+        self.assertEqual(zones[1855], "HOLD")
+        self.assertEqual(zones[1902], "HOLD")
+        self.assertLess(caps[1902], caps[1920])
         self.assertLessEqual(max(caps), 30.0)
-        self.assertEqual(zones[1700], "OFF")
+        self.assertEqual(zones[1500], "OFF")
+        slower, slower_zones = build_roundabout_speed_caps(self.path, 30, 8)
+        for i in range(1770, 1903):
+            self.assertEqual(slower[i], 8.0)
+            self.assertEqual(slower_zones[i], "HOLD")
+        self.assertLessEqual(slower[1700], caps[1700])
+        self.assertEqual(slower_zones[1500], "OFF")
         for bad in (-1, 5, 21):
             with self.assertRaises(ValueError):
                 build_roundabout_speed_caps(self.path, 30, bad)
