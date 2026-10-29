@@ -34,6 +34,7 @@ from static_obstacle_planner import StaticObstaclePlanner, PlanResult, nearest_i
 from integration.static_zone import load_static_zones, in_static_zone
 from integration.static_avoidance_io import configured_avoidance_speed_kmh
 from static_avoidance_path_latch import AvoidancePathLatch
+from shadow_wall_guard import pick_shadow_detour, check_wall_clearance
 
 NETWORK_FILE = ROOT / "config" / "integration_network.json"
 GLOBAL_PATH_FILE = ROOT / "path" / "2026_molit_comp_global_path.txt"
@@ -95,6 +96,7 @@ def main():
         path = np.column_stack((path, np.zeros(len(path))))
     path = path[:, :3]
     static_cfg = missions.get("static", {})
+    wall_cfg = missions.get("gps_shadow_wall_guard", {})
     static_zones = load_static_zones(static_cfg, len(path))
     avoidance_speed_kmh = configured_avoidance_speed_kmh(static_cfg)
 
@@ -156,6 +158,7 @@ def main():
     scan_count = 0
     previous_status = None
     planning_was_enabled = False
+    shadow_verified = False
 
     print("[STATIC ZONES] " + str(static_zones))
     print(f"[STATIC AVOID SPEED] {avoidance_speed_kmh:.1f} km/h")
@@ -221,6 +224,7 @@ def main():
             # and a short dead-reckoning expiry fail-stop.
             # Keep a route accepted inside the zone until geometric release.
             planner_enabled = bool(inside_zone or latch.active)
+            shadow_verified = False
             if not planner_enabled:
                 # Suppress detection, tracking and path generation elsewhere.
                 obstacles, tracked = [], []
@@ -251,9 +255,29 @@ def main():
                 raw_plan = planner.plan(
                     ego_x=ego_x, ego_y=ego_y, obstacles=planner_obstacles
                 )
+                if gps_shadow and not latch.active and raw_plan.status == "AVOIDING":
+                    # Generate the SAME original planner candidates, but
+                    # validate both sides against the full current LiDAR scan.
+                    raw_plan, shadow_verified, wall_reason = pick_shadow_detour(
+                        planner, (ego_x, ego_y, ego_yaw),
+                        planner_obstacles, vehicle_points, wall_cfg
+                    )
                 plan, latch_state = latch.apply(
                     raw_plan, ego_x, ego_y, obstacles=planner_obstacles
                 )
+                if gps_shadow and plan.status == "AVOIDING":
+                    # Re-check an ALREADY LATCHED detour with every new scan.
+                    shadow_verified, wall_reason = check_wall_clearance(
+                        plan.local_path, (ego_x, ego_y, ego_yaw),
+                        vehicle_points, wall_cfg
+                    )
+                    if not shadow_verified:
+                        plan = PlanResult(
+                            "STOP_REQUIRED", np.empty((0,3)), plan.obstacle_id,
+                            plan.avoidance_side, 0.0,
+                            "SHADOW_WALL_UNVERIFIED:"+wall_reason
+                        )
+                        latch_state = "SHADOW_WALL_UNVERIFIED:"+wall_reason
                 # Never accept a brand-new avoidance path after exiting zone.
                 if not inside_zone and not latch.active:
                     raw_plan = PlanResult(
@@ -285,6 +309,7 @@ def main():
                 "in_static_zone": bool(inside_zone),
                 "latch_active": bool(latch.active),
                 "zone_active": zone_active,
+                "shadow_wall_verified": bool(gps_shadow and shadow_verified and status == "AVOIDING"),
             }
             data = json.dumps(packet, separators=(",", ":"), allow_nan=False).encode("utf-8")
             if len(data) > 60000:
