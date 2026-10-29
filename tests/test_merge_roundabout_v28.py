@@ -73,7 +73,7 @@ class MergeRoundaboutV28Test(unittest.TestCase):
     def test_worker_does_not_infer_disabled_rear_or_send_control(self):
         script = (ROOT / "src/merge_side_camera_worker.py").read_text(encoding="utf-8")
         ast.parse(script)
-        self.assertIn('if side not in active_sides and side == "left_rear"', script)
+        self.assertIn('if side not in active_sides:', script)
         self.assertIn('if "left_rear" in active_sides else 0.0', script)
         self.assertIn("mode != previous_mode", script)
         self.assertIn("attenuate_distant_risk(current, area, cfg)", script)
