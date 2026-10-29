@@ -811,6 +811,8 @@ def main():
         decision_sock.close()
         if relay_sock is not None:
             relay_sock.close()
+        if lane_relay_sock is not None:
+            lane_relay_sock.close()
         cv2.destroyAllWindows()
 
 
