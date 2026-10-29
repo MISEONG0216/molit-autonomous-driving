@@ -78,12 +78,15 @@ class SecondTrafficApproachTests(unittest.TestCase):
         self.assertEqual(result["target_speed_kmh"], 20.0)
         self.assertFalse(result["traffic_full_brake"])
 
-    def test_red_still_causes_full_stop(self):
+    def test_red_creeps_to_wp610_then_full_stop(self):
         self.manager.update_traffic_input({"signal": "STOP"}, 101.0)
         result = self.run_at(600, now=101.1)  # 10m before WP620
-        self.assertEqual(result["target_speed_kmh"], 0.0)
-        self.assertTrue(result["traffic_full_brake"])
+        self.assertEqual(result["target_speed_kmh"], 5.0)
+        self.assertFalse(result["traffic_full_brake"])
         self.assertTrue(result["red_latched"])
+        at_gate = self.run_at(610, now=101.2)
+        self.assertEqual(at_gate["target_speed_kmh"], 0.0)
+        self.assertTrue(at_gate["traffic_full_brake"])
 
     def test_earlier_signal_config_unchanged(self):
         self.assertEqual(self.config["traffic"]["approach_distance_m"], 60)
