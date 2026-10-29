@@ -91,10 +91,13 @@ def choose_local_detour(points, cfg, active_side=None):
         for offset in offsets:
             cfg2=dict(cfg)
             cfg2["offset_m"]=float(offset)
-            cfg2["shift_end_m"]=max(
+            # Finish the lateral shift BEFORE reaching the box.
+            cfg2["shift_end_m"]=min(
                 float(cfg.get("shift_end_m",7.0)),
                 obstacle_front-float(cfg.get("obstacle_before_margin_m",1.5))
             )
+            if cfg2["shift_end_m"]<=2.5:
+                continue
             cfg2["return_start_m"]=max(
                 float(cfg.get("return_start_m",10.0)),
                 obstacle_rear+float(cfg.get("obstacle_after_margin_m",2.5))
@@ -106,6 +109,11 @@ def choose_local_detour(points, cfg, active_side=None):
             if cfg2["horizon_m"]>float(cfg.get("max_horizon_m",24.0)):
                 continue
             p=_path(side,cfg2)
+            # Do not certify a late return through an unobserved region.
+            # The current LiDAR scan must reach near the path endpoint.
+            if float(np.max(pts[:,0])) < cfg2["horizon_m"]-float(
+                    cfg.get("max_unobserved_tail_m",2.0)):
+                continue
             hit=np.count_nonzero(_distance_points_to_polyline(pts[:,:2],p)<c)
             if hit<=int(cfg.get("allowed_points",0)):
                 clearance=float(np.min(_distance_points_to_polyline(
