@@ -49,6 +49,6 @@ bash scripts/run_integrated_v25.sh --drive --max-speed 5 --detailed-logs
 
 The script name remains V25; it launches **V34 branch contents** and all existing modules, plus the GPS-shadow lane worker.
 
-**Test order:** start MORAI at a known valid GPS fix; approach tunnel slowly. Inspect worker status `SAFE_LEFT` or `SAFE_RIGHT` and `shadow_wall_verified` and monitor clearance. Do not test higher speed before confirming the actual LiDAR coverage and steering sign. If status `NO_SAFE_SIDE`, `SCAN_SPARSE`, or `WALL_OR_OBSTACLE_IN_SWEPT_PATH`, the vehicle **must stop**.
+**Test order:** start MORAI at a known valid GPS fix; approach tunnel slowly. Inspect worker latch status `SHADOW_WALL_OK_LEFT` or `SHADOW_WALL_OK_RIGHT` and `shadow_wall_verified` and monitor clearance. Do not test higher speed before confirming the actual LiDAR coverage and steering sign. If status `NO_SAFE_SIDE`, `SCAN_SPARSE`, or `WALL_OR_OBSTACLE_IN_SWEPT_PATH`, the vehicle **must stop**.
 
 **Validation status:** V34 changes committed. Synthetic tests added; neither the tests nor actual MORAI simulation have been executed in the user's machine by the assistant.
