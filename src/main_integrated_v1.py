@@ -40,6 +40,7 @@ from integration.static_avoidance_io import (
 )
 from integration.static_zone import load_static_zones, in_static_zone
 from integration.lane_diagnostics import path_tracking_metrics
+from integration.beomsu_lane_guard import make_zones, make_tracking_path, offset_at_waypoint, TEST_SPEED_LIMIT_KMH
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -96,6 +97,7 @@ def open_log():
         "heading_error_deg", "nearest_segment_wp", "curve_radius_m",
         "v7_effective_lfd_m", "v7_steering_gain", "v7_target_wp",
         "v7_switch_bias", "tracking_path_source",
+        "beomsu_offset_m", "beomsu_tracking_dist_m", "beomsu_zone_active",
     ])
     return path, f, w
 
@@ -128,6 +130,11 @@ def main():
     parser.add_argument("--static-control", action="store_true",
                         help="static avoidance in configured WP zones; fail-stop while active")
     parser.add_argument("--max-speed", type=float, default=57.0)
+    parser.add_argument("--beomsu-first-right-m", type=float, default=0.0,
+                        help="Opt-in WP1480-1715 right offset; low-speed test 0.25m")
+    parser.add_argument("--beomsu-extra-zone", action="append", default=[],
+                        metavar="START:END:SIGNED_METRES",
+                        help="Experimental zone; +right/-left; use only after waypoint verification")
     args = parser.parse_args()
 
     if args.merge_control and not args.merge:
@@ -143,6 +150,11 @@ def main():
 
     # Importing V7 already applies the validated V7 monkey-patches.
     global_path = base.load_path(base.PATH_FILE)
+    try:
+        lane_zones = make_zones(len(global_path), args.beomsu_first_right_m, args.beomsu_extra_zone)
+        tracking_path = make_tracking_path(global_path, lane_zones)
+    except ValueError as exc:
+        parser.error(str(exc))
     target_profile, radius_profile, full_profile = (
         profile_test.build_test_profile(global_path, args.max_speed)
     )
@@ -262,6 +274,7 @@ def main():
         print(f"[STATIC ZONES WP] {static_zones}; outside=V7 only")
         print(f"[STATIC POSE] {pose_target}")
         print(f"[STATIC RESULT] {network['static_result']}")
+    print(f"[BEOMSU LANE] zones={lane_zones} / default OFF / cap={TEST_SPEED_LIMIT_KMH:.1f}km/h in offset zones")
     print(f"[LOG] {log_path}")
 
     try:
@@ -365,7 +378,7 @@ def main():
             )
 
             result = base.calculate_pure_pursuit(
-                global_path,
+                tracking_path,
                 nearest_index,
                 current_x,
                 current_y,
@@ -378,6 +391,10 @@ def main():
             else:
                 base_steering = float(result["steering"])
                 base_target = float(target_profile[nearest_index])
+
+            lane_offset_m = offset_at_waypoint(nearest_index, lane_zones)
+            tracking_distance_m = math.hypot(tracking_path[nearest_index, 0] - current_x,
+                                             tracking_path[nearest_index, 1] - current_y)
 
             mission = mission_manager.apply(
                 nearest_index=nearest_index,
@@ -394,6 +411,9 @@ def main():
 
             target_speed_kmh = mission["target_speed_kmh"]
             steering = mission["steering"]
+            if lane_offset_m != 0.0:
+                target_speed_kmh = min(target_speed_kmh, TEST_SPEED_LIMIT_KMH)
+                mission["reasons"].append("beomsu_lane_offset_speed_cap")
 
             # UDP poll() can timestamp a new packet a few milliseconds
             # after loop_start ("now"). Do not flag a fresh plan as stale
@@ -591,6 +611,8 @@ def main():
                 f"{curve_radius_m:.3f}", f"{v7_lfd_m:.3f}",
                 f"{v7_steer_gain:.3f}", v7_target_wp, v7_switch_bias,
                 tracking_path_source,
+                f"{lane_offset_m:+.3f}", f"{tracking_distance_m:.3f}",
+                int(lane_offset_m != 0.0),
             ])
 
             print("\033[2J\033[H", end="")
@@ -614,6 +636,7 @@ def main():
                 f"/ targetWP={v7_target_wp} / switch={v7_switch_bias}"
             )
             print(f"TRACK PATH  : {tracking_path_source} (CTE always vs global path)")
+            print(f"BEOMSU PATH : offset={lane_offset_m:+.3f}m / dist={tracking_distance_m:.3f}m")
             print(f"BASE TARGET : {base_target:.2f} km/h")
             print(f"FINAL TARGET: {target_speed_kmh:.2f} km/h")
             print(f"COMP SPEED  : {current_speed_kmh:.2f} km/h")
