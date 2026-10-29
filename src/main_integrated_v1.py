@@ -699,7 +699,13 @@ def main():
                 if static_updated_at > 0.0 else float("inf")
             )
             static_fresh = bool(
-                static_plan["valid"] and static_age <= static_timeout_sec
+                static_plan["valid"] and static_age <= (
+                    min(static_timeout_sec, float(
+                        missions.get("gps_shadow_wall_guard", {}).get(
+                            "max_verified_scan_age_sec", 2.4
+                        )
+                    )) if shadow_active else static_timeout_sec
+                )
             )
             static_in_zone = (
                 in_static_zone(nearest_index, static_zones) or shadow_active
