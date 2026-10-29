@@ -55,7 +55,12 @@
     "zone_speed_kmh": 20,
     "risk_stop_threshold": 0.6,
     "accept_confirm_frames": 3,
-    "test_zone_note": "User-surveyed MORAI waypoint ranges: roundabout 1770-1820, merge1 2480-2560, merge2 3050-3190."
+    "test_zone_note": "User-surveyed MORAI waypoint ranges: roundabout 1770-1820, merge1 2480-2560, merge2 3050-3190.",
+    "observation_note": "Side cameras 9293/9295 report conservative image-space vehicle risk. The camera-derived danger estimate is not calibrated in metres or TTC. Run MORAI scenario validation before treating a clear result as a safe physical gap.",
+    "side_camera_ports": [
+      9293,
+      9295
+    ]
   },
   "static": {
     "result_timeout_sec": 3.5,
