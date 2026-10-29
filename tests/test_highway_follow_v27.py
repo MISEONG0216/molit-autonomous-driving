@@ -23,9 +23,10 @@ class V27HighwayFollowTest(unittest.TestCase):
         cls.cfg = json.loads((ROOT / "config/integration_missions.json")
                              .read_text(encoding="utf-8"))["highway_follow"]
 
-    def test_user_roi_preserved(self):
+    def test_v30_near_field_roi_preserved(self):
+        # V30 intentionally replaced the original V27 narrow ROI.
         self.assertEqual(LANE_ROI_RATIO, (
-            (0.48, 0.48), (0.52, 0.48), (0.66, 0.78), (0.34, 0.78)
+            (0.44, 0.38), (0.56, 0.38), (0.88, 0.97), (0.12, 0.97)
         ))
 
     def test_zones_include_second_until_tollgate_unknown(self):
