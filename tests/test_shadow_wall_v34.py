@@ -9,7 +9,7 @@ import numpy as np
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/"src/lidar"))
 sys.path.insert(0,str(ROOT/"src"))
-from shadow_wall_guard import check_wall_clearance
+from shadow_wall_guard import check_wall_clearance, pick_shadow_detour
 from integration.static_avoidance_io import parse_static_message
 
 
@@ -61,6 +61,32 @@ class WallCheck(unittest.TestCase):
         cloud=np.column_stack((x,np.full(len(x),4.5),np.zeros(len(x))))
         clear,reason=check_wall_clearance(route(1.8),(0,0,0),cloud,self.cfg)
         self.assertFalse(clear)
+
+    def test_pick_left_when_right_is_blocked_by_tunnel_wall(self):
+        from types import SimpleNamespace
+        class FakePlanner:
+            path = np.column_stack((np.linspace(0, 30, 61), np.zeros(61)))
+            cfg = {"candidate_offsets_m": [-1.8, 1.8]}
+            avoidance_speed_kph = 12.0
+
+            def _select_obstacle(self, ego_index, obstacles):
+                return (SimpleNamespace(id=17), 8, 0.25)
+
+            def _candidate_path(self, ego_index, obs_index, offset):
+                path = route(offset)
+                return path, np.full(len(path), offset)
+
+            def _candidate_safety_diagnostic(self, candidate, offsets, obs):
+                return {"safe": True, "reason": "SAFE"}
+
+        plan, verified, reason = pick_shadow_detour(
+            FakePlanner(), (0.0, 0.0, 0.0), [],
+            sample_cloud(left_y=4.8), self.cfg
+        )
+        self.assertTrue(verified, reason)
+        self.assertEqual(plan.status, "AVOIDING")
+        self.assertEqual(plan.avoidance_side, "LEFT")
+        self.assertLessEqual(plan.recommended_speed_kph, 6.0)
 
     def test_new_udp_flag_requires_bool(self):
         base=dict(status="AVOIDING",path=[[0,0],[5,0]],
