@@ -71,7 +71,12 @@
     },
     "highway_yellow_no_speed_cap": true,
     "post_merge_note": "Only for first highway merge: user screenshot + CSV indicate blocked at WP2538 after reported merge completion; rear-left is ignored from WP2538-2560, while LEFT9293 remains safety gate. Second merge WP3050-3190 keeps rear-left active; actual second completion WP not known. This is a waypoint assumption, not verified lane geometry. No time-based automatic creep if side lane is unsafe.",
-    "speed_note": "Highway merge SAFE/yellow no longer imposes 20kmh; existing V7 curvature, traffic, LiDAR, pedestrian and highway following restrictions remain. Roundabout WP1770-1820 still uses 20kmh cap and left-only risk."
+    "speed_note": "Highway merge SAFE/yellow no longer imposes 20kmh; existing V7 curvature, traffic, LiDAR, pedestrian and highway following restrictions remain. Roundabout WP1770-1820 still uses 20kmh cap and left-only risk.",
+    "prewarm_wp": 25,
+    "prewarm_result_age_sec": 1,
+    "roundabout_completion_min_wp": 1800,
+    "roundabout_progress_wp": 10,
+    "roundabout_completion_note": "Provisional: only after actual STOP/vision-wait + 3 distinct safe camera packets + >=10 WP progress AND WP>=1800, roundabout merge camera is ignored until WP1820. This is not surveyed lane-clearance geometry; validate visually in MORAI before high-speed testing."
   },
   "static": {
     "result_timeout_sec": 3.5,
@@ -98,7 +103,9 @@
     "stop_risk_threshold": 0.5,
     "clear_confirm_frames": 3,
     "zone_note": "User-confirmed by manual MORAI waypoint survey: pedestrian/dynamic-obstacle mission WP720-1050. WP720-760 overlaps static-avoidance zone WP590-760; both safety constraints may apply in that overlap.",
-    "note": "Observe forward camera YOLO person(0) + MiDaS risk from provided script; stop in zone when risk>=0.50. No direct controls from vision worker. Fail stop on missing/stale results while active. Other detected COCO vehicle classes are display-only."
+    "note": "Observe forward camera YOLO person(0) + MiDaS risk from provided script; stop in zone when risk>=0.50. No direct controls from vision worker. Fail stop on missing/stale results while active. Other detected COCO vehicle classes are display-only.",
+    "prewarm_wp": 25,
+    "prewarm_result_age_sec": 1
   },
   "highway_follow": {
     "zones_wp": [
@@ -125,6 +132,10 @@
     "assumed_max_lateral_accel_mps2": 2,
     "assumed_preview_decel_mps2": 2,
     "assumed_profile_accel_mps2": 3,
-    "note": "Frontend in-lane ROI from user code. Second WP3200-tollgate end is NOT specified: follow speed constraint remains through path end but 120kmh is DISABLED on segment 2 until verified tollgate_exit_wp. High-speed control requires explicit --max-speed 120 and MORAI staged validation; never calibrated TTC."
+    "note": "Frontend in-lane ROI from user code. Second WP3200-tollgate end is NOT specified: follow speed constraint remains through path end but 120kmh is DISABLED on segment 2 until verified tollgate_exit_wp. High-speed control requires explicit --max-speed 120 and MORAI staged validation; never calibrated TTC.",
+    "prewarm_wp": 25,
+    "prewarm_result_age_sec": 1,
+    "lost_vehicle_hold_sec": 0.8,
+    "near_roi_note": "Full-frame near-field trapezoid with overlap-based selection, hood crop 0.98 in follow mode; retains last close-vehicle risk for <=0.8s then fades by 1.6s. Not calibrated distance or collision prevention."
   }
 }
