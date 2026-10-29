@@ -128,6 +128,30 @@ def pick_shadow_detour(planner, ego_pose, obstacles, vehicle_points, cfg):
                       "LiDAR sweep checked shadow detour"), True, "SAFE_"+("LEFT" if offset>0 else "RIGHT")
 
 
+def close_forward_collision(vehicle_points, cfg):
+    """Independent emergency STOP for objects or wall encroaching ego path.
+
+    Used in shadow mode even when original object clustering returns CLEAR.
+    Vehicle-frame LiDAR cannot prove all free space; this is an extra brake
+    layer, not permission to move without lane perception.
+    """
+    try:
+        pts = np.asarray(vehicle_points, dtype=float)
+        if pts.ndim != 2 or pts.shape[1] < 3 or not np.isfinite(pts).all():
+            return True
+        half = float(cfg.get("vehicle_half_width_m", .9)) + float(
+            cfg.get("safety_margin_m", .45))
+        danger = (pts[:, 0] >= float(cfg.get("emergency_min_forward_m", 1.5))) & (
+            pts[:, 0] <= float(cfg.get("emergency_stop_ahead_m", 6.0))) & (
+            np.abs(pts[:, 1]) <= half) & (
+            pts[:, 2] >= float(cfg.get("z_min_m", -1.45))) & (
+            pts[:, 2] <= float(cfg.get("z_max_m", 1.25)))
+        return int(np.count_nonzero(danger)) >= int(
+            cfg.get("emergency_min_points", 5))
+    except (ValueError, TypeError, IndexError):
+        return True
+
+
 def planner_nearest(path, x, y):
     d = path[:, :2] - [x, y]
     return int(np.argmin(np.sum(d*d, axis=1)))
