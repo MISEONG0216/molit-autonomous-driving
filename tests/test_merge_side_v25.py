@@ -59,7 +59,7 @@ class MergeSideV25Test(unittest.TestCase):
 
     def test_left_plus_left_rear_and_no_right_camera(self):
         self.assertEqual(self.cfg["side_camera_ports"], [9293])
-        self.assertIsNone(self.cfg["rear_left_camera_port"])
+        self.assertEqual(self.cfg["rear_left_camera_port"], 1118)
         source = (ROOT / "src/merge_side_camera_worker.py").read_text(encoding="utf-8")
         self.assertIn('("left", 9293), ("left_rear", rear_port)', source)
         self.assertNotIn('("right", 9295)', source)
