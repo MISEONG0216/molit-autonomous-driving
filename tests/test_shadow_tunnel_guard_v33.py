@@ -13,8 +13,8 @@ class TunnelSafetyGuardTest(unittest.TestCase):
         start = source.index('elif static_state == "AVOIDING":')
         end = source.index('if static_stop:', start)
         block = source[start:end]
-        self.assertIn("if shadow_active:", block)
-        self.assertIn('static_state = "SHADOW_DETOUR_UNVERIFIED"', block)
+        self.assertIn('if shadow_active and not static_plan.get("shadow_wall_verified", False):', block)
+        self.assertIn('static_state = "SHADOW_WALL_NOT_VERIFIED"', block)
         self.assertIn("static_stop = True", block)
         self.assertIn("else:", block)
         self.assertIn("local_path_pure_pursuit(", block)
