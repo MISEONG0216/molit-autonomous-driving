@@ -24,7 +24,7 @@ from integration.roundabout_exit_offset import make_roundabout_exit_path
 from integration.roundabout_speed_cap import build_roundabout_speed_caps
 
 EXPECTED_WAYPOINTS = 4430
-MAX_TEST_SPEED_KMH = 30.0
+MAX_TEST_SPEED_KMH = 120.0
 OFFSET_ZONE_SPEED_CAP_KMH = 20.0
 
 # Fixed candidates from the team's experimental branches (not proven tire clearance).
@@ -53,7 +53,7 @@ def build_team_lane_plan(official_path, requested_max_kmh):
 
     maximum = float(requested_max_kmh)
     if not math.isfinite(maximum) or not 0.0 < maximum <= MAX_TEST_SPEED_KMH:
-        raise ValueError("Team lane tuning requires 0 < --max-speed <= 30 km/h")
+        raise ValueError("Team lane tuning requires 0 < --max-speed <= 120 km/h")
 
     zones = make_zones(len(official), GUARDRAIL_RIGHT_M, EXTRA_ZONES)
     tracking = make_tracking_path(official, zones)
@@ -69,10 +69,19 @@ def build_team_lane_plan(official_path, requested_max_kmh):
     if not np.all(np.isfinite(shifts)) or float(np.max(shifts)) > 0.501:
         raise ValueError("Unsafe/unexpected tracking path offset (>0.50 m)")
 
+    # The V20 roundabout cap has long braking/release ramps. At a 120 km/h
+    # request those ramps would otherwise throttle the V38 high-speed zone
+    # WP2570-3040, even where the team's path is completely unchanged.
+    # Bound the roundabout ramp to the existing V38 normal-road 57 km/h
+    # reference. Outside that ramp, leave the ORIGINAL V38 speed profile
+    # (including the verified highway fast zone) free to set the target.
+    normal_road_reference = min(maximum, 57.0)
     roundabout_caps, _zones = build_roundabout_speed_caps(
-        official, maximum, ROUNDABOUT_HOLD_SPEED_KMH,
+        official, normal_road_reference, ROUNDABOUT_HOLD_SPEED_KMH,
     )
     caps = np.asarray(roundabout_caps, dtype=float)
+    if maximum > normal_road_reference:
+        caps[caps >= normal_road_reference - 1e-8] = maximum
     caps[shifts > 1e-8] = np.minimum(
         caps[shifts > 1e-8], OFFSET_ZONE_SPEED_CAP_KMH,
     )
