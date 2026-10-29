@@ -29,10 +29,15 @@ class MergeRoundaboutV28Test(unittest.TestCase):
             self.assertEqual(merge_camera_mode(wp, self.cfg, True), "roundabout")
 
     def test_highway_merge_both_cameras_enabled(self):
-        for wp in (2480, 2520, 2560, 3050, 3120, 3190):
+        for wp in (2480, 2520, 2537, 3050, 3120, 3190):
             mode = merge_camera_mode(wp, self.cfg)
             self.assertEqual(mode, "highway_merge")
             self.assertEqual(active_merge_cameras(mode), ("left", "left_rear"))
+        # V29: user-observed completion WP2538, rear no longer used.
+        for wp in (2538, 2540, 2560):
+            mode = merge_camera_mode(wp, self.cfg)
+            self.assertEqual(mode, "post_merge")
+            self.assertEqual(active_merge_cameras(mode), ("left",))
         for wp in (1769, 1821, 2479, 2561, 3049, 3191):
             self.assertEqual(merge_camera_mode(wp, self.cfg), "off")
             self.assertEqual(active_merge_cameras("off"), ())
