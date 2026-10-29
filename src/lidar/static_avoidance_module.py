@@ -372,7 +372,9 @@ def main():
                                 float(ego_cfg.get("avoidance_speed_kmh",5.0)),
                                 "EGO_LIDAR_INITIAL"
                             )
-                            latch_state = "EGO_LIDAR_NEW_"+plan.avoidance_side
+                            latch_state = ("EGO_LIDAR_NEW_"+plan.avoidance_side
+                                           +"_OFFSET_"+format(float(local.get("offset_m",0.0)),".2f")
+                                           +"_GAP_"+format(float(local.get("min_clearance_m",0.0)),".2f"))
                         elif local["status"] == "CLEAR":
                             plan = PlanResult(
                                 "CLEAR", np.empty((0,3)), None, None, 0.,
