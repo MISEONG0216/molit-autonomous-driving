@@ -1,4 +1,4 @@
-"""Helpers for conservative left/right MORAI camera merge observations."""
+"""Helpers for MORAI left-side and left-rear merging observations."""
 
 import math
 
@@ -68,3 +68,47 @@ def format_result(side, rear, decision):
     return ("MERGE|%.4f|%.4f|%.4f|%s" % (
         side, rear, max(side, rear), decision
     )).encode("ascii")
+
+
+def merge_camera_mode(wp, cfg, all_zones=False):
+    """Return enabled camera mode. Roundabout uses LEFT only.
+
+    Outside known zones --merge-all is an explicit debugging override,
+    never a reason to activate rear-left in the configured roundabout.
+    """
+    if type(wp) is not int or wp < 0:
+        return "off"
+    for pair in cfg.get("roundabout_zones", ()):
+        if len(pair) == 2 and pair[0] <= wp <= pair[1]:
+            return "roundabout"
+    for pair in cfg.get("zones", ()):
+        if len(pair) == 2 and pair[0] <= wp <= pair[1]:
+            return "highway_merge"
+    return "highway_merge" if all_zones else "off"
+
+
+def active_merge_cameras(mode):
+    if mode == "roundabout":
+        return ("left",)
+    if mode == "highway_merge":
+        return ("left", "left_rear")
+    return ()
+
+
+def attenuate_distant_risk(raw_risk, area_ratio, cfg):
+    """Reduce false STOP from very small boxes without lowering near risk.
+
+    Image size is only a distance *proxy*. This is not a lane classifier,
+    and a distant fast-approaching vehicle may still be missed.
+    """
+    if not bool(cfg.get("distance_sensitivity_enabled", True)):
+        return clamp(raw_risk)
+    near = float(cfg.get("near_full_risk_area_ratio", 0.030))
+    far = float(cfg.get("far_area_ratio", 0.006))
+    far_weight = float(cfg.get("far_risk_weight", 0.45))
+    if not (0.0 <= far < near <= 1.0 and 0.0 < far_weight <= 1.0):
+        raise ValueError("Invalid merge distance-sensitivity configuration")
+    area = clamp(area_ratio)
+    fraction = clamp((area - far) / (near - far))
+    weight = far_weight + (1.0 - far_weight) * fraction
+    return clamp(raw_risk) * weight
