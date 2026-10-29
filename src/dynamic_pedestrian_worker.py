@@ -8,7 +8,7 @@ relay. This module NEVER binds MORAI 9291 or transmits EgoCtrlCmd.
 Source risk: MiDaS relative depth 0.40 + birdview area 0.20 +
 consecutive-box area-growth 0.40, STOP_THRESHOLD 0.50.
 Only COCO person (class 0) can trigger the pedestrian-mission STOP.
-Car/bus/truck boxes are retained for optional visualisation only.
+Bicycle/car/motorcycle/bus/truck boxes are also used for highway following risk.
 """
 import argparse
 import json
@@ -29,7 +29,8 @@ NETWORK = ROOT / "config" / "integration_network.json"
 MISSION = ROOT / "config" / "integration_missions.json"
 
 CONF_THRESHOLD = 0.4
-FRONT_CLASSES = (0, 2, 5, 7)
+FRONT_CLASSES = (0, 1, 2, 3, 5, 7)
+VEHICLE_CLASSES = (1, 2, 3, 5, 7)
 MIDAS_INTERVAL = 3
 W_DEPTH = 0.40
 W_AREA = 0.20
@@ -269,7 +270,7 @@ def main():
             crop_h = int(h * (0.98 if follow_enabled else HOOD_CROP_RATIO))
             roi_frame = frame[:crop_h, :]
             # Avoid spending inference on unrelated classes in highway mode.
-            detect_classes = list(FRONT_CLASSES) if ped_enabled else [2, 5, 7]
+            detect_classes = list(FRONT_CLASSES) if ped_enabled else list(VEHICLE_CLASSES)
             results = yolo_model(roi_frame, classes=detect_classes, verbose=False)[0]
             detections = []
             for box in results.boxes:
@@ -309,7 +310,7 @@ def main():
                 # The supplied trapezoid filters objects by their bounding-box
                 # bottom center. Neither risk nor drawing includes adjacent lanes.
                 if follow_enabled and (
-                    cls not in (2, 5, 7)
+                    cls not in VEHICLE_CLASSES
                     or not vehicle_overlaps_lane(x1, y1, x2, y2, w, h)
                 ):
                     continue
@@ -337,7 +338,7 @@ def main():
                 if cls == 0 and ped_enabled:
                     persons += 1
                     max_person_risk = max(max_person_risk, risk)
-                if cls in (2, 5, 7) and follow_enabled:
+                if cls in VEHICLE_CLASSES and follow_enabled:
                     vehicles += 1
                     max_vehicle_risk = max(max_vehicle_risk, risk)
                 if args.show:
