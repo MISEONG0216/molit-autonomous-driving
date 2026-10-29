@@ -295,6 +295,9 @@ def main():
                     ) < 0
                 ):
                     continue
+                # Align approach-area history with *filtered* in-lane boxes,
+                # not all boxes returned by YOLO.
+                idx = len(curr_bbox_areas)
                 bbox_area = (x2 - x1) * (y2 - y1)
                 curr_bbox_areas.append(bbox_area)
                 approach = 0.0
