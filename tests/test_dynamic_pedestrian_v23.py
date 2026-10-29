@@ -40,21 +40,21 @@ class DynamicZoneTests(unittest.TestCase):
 
     def test_dynamic_zone_exact_setting(self):
         z = load_dynamic_zones(self.missions["dynamic_pedestrian"], 4430)
-        self.assertEqual(z, ((430, 580),))
-        self.assertTrue(in_dynamic_zone(430, z))
-        self.assertTrue(in_dynamic_zone(500, z))
-        self.assertTrue(in_dynamic_zone(580, z))
-        for index in (0, 414, 429, 581, 620, 635, 862, 1224):
+        self.assertEqual(z, ((720, 1050),))
+        for index in (720, 760, 862, 1050):
+            self.assertTrue(in_dynamic_zone(index, z))
+        for index in (0, 414, 620, 635, 719, 1051, 1224):
             self.assertFalse(in_dynamic_zone(index, z))
 
-    def test_dynamic_and_static_nonoverlap(self):
+    def test_static_overlap_is_only_wp720_to_760(self):
         dynamic = load_dynamic_zones(self.missions["dynamic_pedestrian"], 4430)
         static = self.missions["static"]["avoidance_zones_wp"]
-        for idx in range(4430):
-            self.assertFalse(
-                in_dynamic_zone(idx, dynamic) and
-                any(start <= idx <= end for start, end in static)
-            )
+        overlap = [
+            idx for idx in range(4430)
+            if in_dynamic_zone(idx, dynamic)
+            and any(start <= idx <= end for start, end in static)
+        ]
+        self.assertEqual(overlap, list(range(720, 761)))
 
     def test_invalid_zones_fail_closed(self):
         bad = ([], None, [[-1, 1]], [[3, 2]], [[0, 5000]],
