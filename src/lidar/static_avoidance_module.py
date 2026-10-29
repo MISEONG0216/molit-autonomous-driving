@@ -273,9 +273,22 @@ def main():
                             # the newest vehicle-frame wall returns. Aborting
                             # is safer than swapping sides mid-avoidance.
                             remaining = shadow_locked_path[nearest:]
+                            # The original V34 checker required >=6m of
+                            # remaining route and would STOP permanently near
+                            # the endpoint. Scale required lookahead to actual
+                            # remaining maneuver length, never disable sweep.
+                            remaining_forward = float(np.max(
+                                np.linalg.norm(
+                                    remaining[:, :2] - [ego_x,ego_y],axis=1
+                                )
+                            ))
+                            remaining_cfg = dict(wall_cfg)
+                            remaining_cfg["minimum_path_ahead_m"] = min(
+                                6.0, max(1.0, remaining_forward - 1.5)
+                            )
                             wall_ok, reason = check_wall_clearance(
                                 remaining, (ego_x, ego_y, ego_yaw),
-                                vehicle_points, wall_cfg
+                                vehicle_points, remaining_cfg
                             )
                             if wall_ok:
                                 plan = PlanResult(
