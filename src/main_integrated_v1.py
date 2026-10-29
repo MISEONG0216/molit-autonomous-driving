@@ -729,14 +729,10 @@ def main():
                     if static_fresh and not static_plan["zone_active"]:
                         static_state = "ZONE_MISMATCH"
                 elif static_state == "AVOIDING":
-                    if shadow_active:
-                        # The original global-XY LiDAR detour assumes a
-                        # configured 7m-wide drivable corridor. Under GPS
-                        # blackout the bounded dead-reckoned pose does NOT
-                        # establish tunnel-wall clearance. Refuse the unverified
-                        # lateral detour instead of steering into a wall.
+                    if shadow_active and not static_plan.get("shadow_wall_verified", False):
+                        # Mandatory positive verification by current LiDAR scan.
                         static_stop = True
-                        static_state = "SHADOW_DETOUR_UNVERIFIED"
+                        static_state = "SHADOW_WALL_NOT_VERIFIED"
                     else:
                         target_speed_kmh = min(target_speed_kmh, static_speed_limit)
                         local_pp = local_path_pure_pursuit(
