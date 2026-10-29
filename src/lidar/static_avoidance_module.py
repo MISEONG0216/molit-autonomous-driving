@@ -311,7 +311,8 @@ def main():
                                 )
                                 shadow_verified = False
                                 latch_state = "EGO_LIDAR_TAIL_BLOCKED"
-                        if shadow_locked_path is not None:
+                        if shadow_locked_path is not None and not ready_for_release:
+                            # Do not overwrite TAIL_BLOCKED with AVOIDING.
                             # Revalidate the REMAINING locked route against
                             # the newest vehicle-frame wall returns. Aborting
                             # is safer than swapping sides mid-avoidance.
