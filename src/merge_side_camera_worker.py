@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""MORAI side cameras 9293/9295 -> merge-risk result localhost:9301.
+"""MORAI LEFT-side + rear-left-facing cameras -> merge-risk localhost:9301.
 
 Only main_integrated_v1.py sends EgoCtrlCmd. Side-camera risk is an
 uncalibrated image-space proxy, NOT metric range or time-to-collision.
@@ -34,7 +34,7 @@ def take_latest(sock, assembler):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--show", action="store_true", help="show both cameras even outside merge zones")
+    p.add_argument("--show", action="store_true", help="show LEFT and LEFT-REAR cameras, never the right camera")
     p.add_argument("--imgsz", type=int, default=480)
     args = p.parse_args()
 
@@ -48,9 +48,21 @@ def main():
         cfg = json.load(f)["merge"]
     if net["merge_gate"]["bind_ip"] != "127.0.0.1":
         raise RuntimeError("merge_gate must be localhost")
+    rear_port = cfg.get("rear_left_camera_port")
+    if type(rear_port) is not int or not 1 <= rear_port <= 65535:
+        raise RuntimeError(
+            "Rear-left-facing camera UDP port NOT configured. "
+            "Set merge.rear_left_camera_port in config/integration_missions.json "
+            "after verifying MORAI Sensor Settings. Right camera UDP9295 is forbidden."
+        )
+    if rear_port in (9291, 9293, 9295, 9300, 9301, 9302, 9303, 9304, 9305, 9306, 9307):
+        raise RuntimeError(
+            "Invalid rear-left-facing port: conflicts with front/left/right or local integration. "
+            "Do NOT reuse right camera UDP9295."
+        )
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = YOLO("yolov8n.pt")
-    print(f"[MERGE CAM] device={device} left UDP9293 right UDP9295")
+    print(f"[MERGE CAM] device={device} LEFT UDP9293 / LEFT_REAR UDP{rear_port}; RIGHT DISABLED")
     print(f"[MERGE CAM] gate=127.0.0.1:{net['merge_gate']['port']}")
     print(f"[MERGE CAM] results=127.0.0.1:{net['merge_result']['port']}")
     print("[MERGE CAM] NO EgoCtrlCmd sender. Merge inference gated by main waypoint.")
@@ -59,7 +71,7 @@ def main():
     gate = None
     publisher = None
     try:
-        for side, port in (("left", 9293), ("right", 9295)):
+        for side, port in (("left", 9293), ("left_rear", rear_port)):
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8 * 1024 * 1024)
             s.bind(("0.0.0.0", port))
@@ -172,19 +184,19 @@ def main():
                 for side in cameras
             )
             if ready:
-                left, right = risk["left"], risk["right"]
-                decision = ("MERGE_REJECT" if max(left,right) >= cfg["risk_stop_threshold"]
+                left, rear = risk["left"], risk["left_rear"]
+                decision = ("MERGE_REJECT" if max(left,rear) >= cfg["risk_stop_threshold"]
                             else "MERGE_ACCEPT")
             else:
-                left, right, decision = 1.0, 1.0, "MERGE_REJECT"
+                left, rear, decision = 1.0, 1.0, "MERGE_REJECT"
 
             # Only a new inference can confirm a safe gap. Never turn
             # repeated timer ticks into three fake accept confirmations.
             if new_inference or (not ready and now - last_log >= 0.5):
-                publisher.sendto(format_result(left,right,decision),target)
+                publisher.sendto(format_result(left,rear,decision),target)
             state = (decision, ready)
             if state != last_state or now-last_log >= 3.0:
-                print(f"[MERGE] WP={latest_wp} left={left:.2f} right={right:.2f}"
+                print(f"[MERGE] WP={latest_wp} left={left:.2f} left_rear={rear:.2f}"
                       f" ready={ready} => {decision}")
                 last_state, last_log = state, now
     except KeyboardInterrupt:
