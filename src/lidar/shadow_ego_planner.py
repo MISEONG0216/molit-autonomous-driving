@@ -71,18 +71,52 @@ def choose_local_detour(points, cfg, active_side=None):
     n=int(cfg.get("min_side_points",8))
     if len(left)<n or len(right)<n:
         return dict(fail,reason="SIDE_WALL_NOT_OBSERVED")
+    # Candidate geometry must adapt to the observed obstacle footprint:
+    # do not return to lane before the rear edge of the detected object.
+    obstacle_front=float(np.min(obstacle[:,0]))
+    obstacle_rear=float(np.max(obstacle[:,0]))
+    half=float(cfg.get("vehicle_half_width_m",.9))
+    margin=float(cfg.get("margin_m",.45))
+    min_offset=float(cfg.get("minimum_offset_m",.8))
+    max_offset=float(cfg.get("maximum_offset_m",2.6))
+    step=float(cfg.get("offset_step_m",.2))
     candidates=[]
     for side in (1,-1):
-        p=_path(side,cfg)
-        hit=np.count_nonzero(_distance_points_to_polyline(pts[:,:2],p)<c)
-        if hit<=int(cfg.get("allowed_points",0)):
-            candidates.append((side,p))
+        # Lateral clearance needed to fit the whole vehicle beside the
+        # obstacle, not merely to move the camera center past its centroid.
+        required=(float(np.max(obstacle[:,1]))+half+margin if side==1
+                  else -float(np.min(obstacle[:,1]))+half+margin)
+        offsets=np.arange(max(min_offset,math.ceil(max(0,required)/step)*step),
+                          max_offset+1e-6,step)
+        for offset in offsets:
+            cfg2=dict(cfg)
+            cfg2["offset_m"]=float(offset)
+            cfg2["shift_end_m"]=max(
+                float(cfg.get("shift_end_m",7.0)),
+                obstacle_front-float(cfg.get("obstacle_before_margin_m",1.5))
+            )
+            cfg2["return_start_m"]=max(
+                float(cfg.get("return_start_m",10.0)),
+                obstacle_rear+float(cfg.get("obstacle_after_margin_m",2.5))
+            )
+            cfg2["horizon_m"]=max(
+                float(cfg.get("horizon_m",15.0)),
+                cfg2["return_start_m"]+float(cfg.get("return_length_m",5.0))
+            )
+            if cfg2["horizon_m"]>float(cfg.get("max_horizon_m",24.0)):
+                continue
+            p=_path(side,cfg2)
+            hit=np.count_nonzero(_distance_points_to_polyline(pts[:,:2],p)<c)
+            if hit<=int(cfg.get("allowed_points",0)):
+                clearance=float(np.min(_distance_points_to_polyline(
+                    pts[:,:2],p)))-c
+                candidates.append((clearance,side,float(offset),p))
     if not candidates:
-        return dict(fail,reason="NO_FREE_SIDE")
-    if active_side in (1,-1):
-        for side,p in candidates:
-            if side==active_side:
-                return {"status":"AVOIDING","side":side,"path":p.tolist(),"reason":"LOCKED_SIDE_CLEAR"}
-    # Prefer LEFT if both are geometrically clear; avoid arbitrary flip.
-    side,p=candidates[0]
-    return {"status":"AVOIDING","side":side,"path":p.tolist(),"reason":"EGO_LIDAR_CLEAR"}
+        return dict(fail,reason="NO_FREE_CANDIDATE")
+    # Prefer the candidate with more minimum clearance. When nearly
+    # identical prefer less deviation from camera lane. Never bias LEFT.
+    best=max(candidates,key=lambda t:(round(t[0],2),-t[2]))
+    clearance,side,offset,p=best
+    return {"status":"AVOIDING","side":side,"path":p.tolist(),
+            "offset_m":offset,"min_clearance_m":clearance,
+            "reason":"EGO_VARIABLE_CLEARANCE"}
