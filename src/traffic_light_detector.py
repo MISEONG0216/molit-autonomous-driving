@@ -59,7 +59,13 @@ WINDOW_NAME = "MORAI Vehicle Signal + Stop Line"
 # ---------------- Vehicle traffic-light detector ----------------
 CLASS_NAMES = ["red", "yellow", "green", "greenleft", "redleft"]
 VEHICLE_ROI = (0.22, 0.02, 0.80, 0.46)
-TARGET_SIGNAL_POINT = (0.58, 0.27)
+TARGET_SIGNAL_POINT = (
+    float(os.getenv("TRAFFIC_TARGET_SIGNAL_X", "0.58")),
+    float(os.getenv("TRAFFIC_TARGET_SIGNAL_Y", "0.27")),
+)
+# Disabled by default: the original V38 candidate selection stays unchanged
+# until the correct light location is confirmed on a MORAI camera screenshot.
+TARGET_SIGNAL_MAX_DISTANCE = float(os.getenv("TRAFFIC_TARGET_MAX_DISTANCE", "0"))
 MIN_BOX_WIDTH = 16
 MIN_BOX_HEIGHT = 10
 MIN_ASPECT_RATIO = 1.70
@@ -122,6 +128,24 @@ def candidate_score(candidate, width, height):
     aspect_score = min(candidate["aspect"] / 3.0, 1.0)
     return (0.30 * candidate["det_conf"] + 0.30 * candidate["cls_conf"]
             + 0.20 * position_score + 0.20 * aspect_score)
+
+
+def route_signal_candidates(candidates, width, height):
+    """Optional fail-closed image-space gate for a verified route signal.
+
+    Zero radius preserves the complete V38 candidate list. When enabled,
+    candidates outside the verified target area are never allowed to supply
+    GO/STOP or the independent left-arrow evidence.
+    """
+    if TARGET_SIGNAL_MAX_DISTANCE <= 0:
+        return candidates
+    tx, ty = TARGET_SIGNAL_POINT
+    return [
+        item for item in candidates
+        if (((item["xmin"] + item["xmax"]) * 0.5 / width - tx) ** 2
+            + ((item["ymin"] + item["ymax"]) * 0.5 / height - ty) ** 2) ** 0.5
+        <= TARGET_SIGNAL_MAX_DISTANCE
+    ]
 
 
 def driving_decision(label):
@@ -410,6 +434,8 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[INFO] device={device}")
     print(f"[INFO] YOLO mode=vehicle-ROI only, imgsz={YOLO_IMGSZ}")
+    print(f"[INFO] target={TARGET_SIGNAL_POINT} max-distance="
+          f"{TARGET_SIGNAL_MAX_DISTANCE:.3f} (0=original V38 selection)")
     classifier, detector = load_models(device)
     print("[OK] traffic-light models loaded")
 
@@ -582,6 +608,10 @@ def main():
                     "label": CLASS_NAMES[predicted_index.item()],
                 })
 
+            # Only a manually verified image region may narrow candidate
+            # selection. The default zero radius leaves original V38 intact.
+            route_candidates = route_signal_candidates(candidates, width, height)
+
             # Separate per-frame left-arrow evidence from the top-scoring box.
             # A red lamp can score higher in the same traffic signal image.
             # The NIA classifier has two left-bearing classes:
@@ -593,7 +623,7 @@ def main():
             left_arrow_history.append(any(
                 item["label"] in ("greenleft", "redleft")
                 and item["cls_conf"] >= 0.60
-                for item in candidates
+                for item in route_candidates
             ))
             stable_left_arrow = (
                 sum(left_arrow_history) >= LEFT_ARROW_MIN_VOTES
@@ -604,9 +634,9 @@ def main():
             now_signal = time.time()
             voted_label = "unknown"
 
-            if candidates:
+            if route_candidates:
                 selected = max(
-                    candidates,
+                    route_candidates,
                     key=lambda item: candidate_score(item, width, height),
                 )
                 signal_history.append(selected["label"])
@@ -737,6 +767,35 @@ def main():
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 1
                 )
 
+            # Display every accepted candidate and its CLASSIFIER label.
+            # Previously only the winner was outlined, masking side-signal
+            # selection errors when red and green lights appeared together.
+            for item in candidates:
+                eligible = item in route_candidates
+                box_color = (180, 190, 250) if eligible else (100, 100, 100)
+                cv2.rectangle(
+                    frame, (item["xmin"], item["ymin"]),
+                    (item["xmax"], item["ymax"]), box_color, 1
+                )
+                cv2.putText(
+                    frame,
+                    (f"{item['label']} det={item['det_conf']:.2f} "
+                     f"cls={item['cls_conf']:.2f}"
+                     + ("" if eligible else " OUTSIDE_TARGET")),
+                    (item["xmin"], max(15, item["ymin"] - 3)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.40, box_color, 1,
+                )
+
+            if TARGET_SIGNAL_MAX_DISTANCE > 0:
+                cv2.ellipse(
+                    frame,
+                    (int(TARGET_SIGNAL_POINT[0] * width),
+                     int(TARGET_SIGNAL_POINT[1] * height)),
+                    (int(TARGET_SIGNAL_MAX_DISTANCE * width),
+                     int(TARGET_SIGNAL_MAX_DISTANCE * height)),
+                    0, 0, 360, (255, 180, 0), 1,
+                )
+
             if selected:
                 color = (0, 255, 0) if decision.startswith("GO") else (0, 0, 255)
                 if stable_label == "yellow":
@@ -755,7 +814,8 @@ def main():
                 frame,
                 (
                     f"YOLO TL raw:{len(raw_signal_boxes)} "
-                    f"accepted:{len(candidates)} {inference_ms:.0f}ms"
+                    f"accepted:{len(candidates)} route:{len(route_candidates)} "
+                    f"{inference_ms:.0f}ms"
                 ),
                 (roi_left + 5, max(20, roi_top + 20)),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 180, 0), 1
