@@ -265,7 +265,8 @@ def main():
                 plan, latch_state = latch.apply(
                     raw_plan, ego_x, ego_y, obstacles=planner_obstacles
                 )
-                if gps_shadow and close_forward_collision(vehicle_points, wall_cfg):
+                if (gps_shadow and plan.status != "AVOIDING"
+                        and close_forward_collision(vehicle_points, wall_cfg)):
                     # Independent near-field wall/object guard. This also
                     # protects against a wall missed by width-limited DBSCAN.
                     plan = PlanResult(
