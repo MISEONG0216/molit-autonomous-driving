@@ -487,6 +487,12 @@ def main():
                     1.5, max(0.0, float(pedestrian_cfg.get("prewarm_result_age_sec", 1.0)))
                 )
                 pedestrian_latch.reset()
+                # A prewarmed STOP_REQUIRED may have been received just
+                # BEFORE crossing WP720. Re-evaluate that fresh packet on
+                # entry so resetting the latch cannot erase a real hazard.
+                if (pedestrian_result["valid"]
+                        and pedestrian_updated_at >= pedestrian_zone_entered_at):
+                    pedestrian_new_result = True
             elif not pedestrian_in_zone and pedestrian_was_in_zone:
                 pedestrian_latch.reset()
             pedestrian_was_in_zone = pedestrian_in_zone
