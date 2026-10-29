@@ -304,6 +304,11 @@ def main():
                             "SHADOW_WALL_UNVERIFIED:"+wall_reason
                         )
                         latch_state = "SHADOW_WALL_UNVERIFIED:"+wall_reason
+                    else:
+                        latch_state = (
+                            "SHADOW_WALL_OK_" + str(plan.avoidance_side)
+                            + " " + latch_state
+                        )
                 # Never accept a brand-new avoidance path after exiting zone.
                 if not inside_zone and not latch.active:
                     raw_plan = PlanResult(
