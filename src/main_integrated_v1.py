@@ -586,9 +586,13 @@ def main():
                 base_steering = (
                     float(lane_result["steering"]) if lane_fresh else 0.0
                 )
+                # A fresh LiDAR local avoidance path may temporarily
+                # replace a lane view occluded by the obstacle itself.
+                # Do not set zero here; the final safety arbiter still
+                # commands FULL STOP unless lane or valid LiDAR is available.
                 base_target = (
                     min(float(shadow_cfg.get("shadow_speed_kmh", 12.0)),
-                        float(args.max_speed)) if not shadow_stop else 0.0
+                        float(args.max_speed)) if gps_mode == "SHADOW" else 0.0
                 )
             elif result is None:
                 base_steering = 0.0
@@ -745,6 +749,14 @@ def main():
                     mission["reasons"].append("static_stop_or_stale")
                 elif static_active:
                     mission["reasons"].append("static_local_avoidance")
+
+            if (shadow_active and static_active and gps_mode == "SHADOW"
+                    and nearest_distance <= float(
+                        shadow_cfg.get("max_shadow_path_offset_m", 7.0))):
+                # Obstacle may occlude the lane. Permit ONLY a fresh valid
+                # original LiDAR local route to override lane-vision dropout;
+                # GPS/DR expiry, too much path drift, and LiDAR STOP still win.
+                shadow_stop = False
 
             if shadow_active:
                 target_speed_kmh = min(
