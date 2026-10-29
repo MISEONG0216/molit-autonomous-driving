@@ -377,6 +377,10 @@ def main():
         "--relay-pedestrian", action="store_true",
         help="forward camera datagrams to localhost pedestrian worker without second 9291 subscriber",
     )
+    parser.add_argument(
+        "--relay-lane", action="store_true",
+        help="forward the existing 9291 JPEG UDP stream to GPS-shadow lane worker",
+    )
     args = parser.parse_args()
 
     relay_sock = None
@@ -390,6 +394,18 @@ def main():
         relay_target = ("127.0.0.1", int(relay_cfg["port"]))
         relay_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         print(f"[PED RELAY] 9291 camera datagrams -> {relay_target}")
+
+    lane_relay_sock = None
+    lane_relay_target = None
+    if args.relay_lane:
+        with open(os.path.join(CONFIG_DIR, "integration_network.json"), "r", encoding="utf-8") as f:
+            lane_network = json.load(f)
+        lane_cfg = lane_network["gps_shadow_camera_relay"]
+        if lane_cfg["bind_ip"] != "127.0.0.1":
+            raise ValueError("GPS shadow lane relay must be localhost")
+        lane_relay_target = ("127.0.0.1", int(lane_cfg["port"]))
+        lane_relay_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        print(f"[LANE RELAY] 9291 camera datagrams -> {lane_relay_target}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[INFO] device={device}")
@@ -459,6 +475,11 @@ def main():
                         relay_sock.sendto(packet, relay_target)
                     except OSError as exc:
                         print(f"[PED RELAY WARN] {exc}")
+                if lane_relay_sock is not None:
+                    try:
+                        lane_relay_sock.sendto(packet, lane_relay_target)
+                    except OSError as exc:
+                        print(f"[LANE RELAY WARN] {exc}")
                 jpeg_buffer += packet
 
             if len(jpeg_buffer) > 2 * 1024 * 1024:
