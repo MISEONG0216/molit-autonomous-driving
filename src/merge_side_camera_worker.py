@@ -93,6 +93,7 @@ def main():
         previous_area = {side: 0.0 for side in cameras}
         last_inferred = {side: 0.0 for side in cameras}
         latest_wp, gate_all, last_gate = None, False, 0.0
+        roundabout_done = False
         previous_mode = 'off'
         last_state, last_log = None, 0.0
 
@@ -113,26 +114,34 @@ def main():
                     if type(wp) is int and 0 <= wp < 4430:
                         latest_wp = wp
                         gate_all = obj.get("merge_all") is True
+                        roundabout_done = obj.get("roundabout_done") is True
                         last_gate = time.monotonic()
                 except (ValueError, UnicodeError, TypeError, AttributeError):
                     pass
 
             gate_fresh = (latest_wp is not None
                           and time.monotonic() - last_gate <= 1.0)
-            mode = (merge_camera_mode(latest_wp, cfg, gate_all)
+            mode = (merge_camera_mode(latest_wp, cfg, gate_all, roundabout_done)
                     if gate_fresh else "off")
             active_sides = active_merge_cameras(mode)
             enabled = bool(active_sides)
             if mode != previous_mode:
+                prearm_to_live = (
+                    (previous_mode, mode) in (
+                        ("roundabout_prearm", "roundabout"),
+                        ("highway_prearm", "highway_merge"),
+                    )
+                )
                 print(f"[MERGE ZONE] {mode.upper()} WP={latest_wp} "
                       f"active={active_sides} rear_left={'ON' if 'left_rear' in active_sides else 'OFF'}")
                 # Never inherit previous-zone camera evidence or JPEG fragments.
-                previous_area = {side: 0.0 for side in cameras}
-                risk = {side: 1.0 for side in cameras}
-                last_inferred = {side: 0.0 for side in cameras}
-                for assembler in assemblers.values():
-                    assembler.data.clear()
-                if mode in ("roundabout", "post_merge"):
+                if not prearm_to_live:
+                    previous_area = {side: 0.0 for side in cameras}
+                    risk = {side: 1.0 for side in cameras}
+                    last_inferred = {side: 0.0 for side in cameras}
+                    for assembler in assemblers.values():
+                        assembler.data.clear()
+                if mode in ("roundabout", "roundabout_prearm", "post_merge", "roundabout_done"):
                     risk["left_rear"] = 0.0
                     frames.pop("left_rear", None)
                 previous_mode = mode
@@ -151,7 +160,7 @@ def main():
                             cam.recvfrom(65535)
                         except BlockingIOError:
                             break
-                    if mode in ("roundabout", "post_merge"):
+                    if mode in ("roundabout", "roundabout_prearm", "post_merge", "roundabout_done"):
                         frames.pop(side, None)
                     continue
                 jpeg = take_latest(cam, assemblers[side])
@@ -177,7 +186,7 @@ def main():
                         x1, y1, x2, y2, width, height,
                         previous_area_ratio=previous_area[side],
                     )
-                    if mode in ("highway_merge", "post_merge"):
+                    if mode in ("highway_merge", "highway_prearm", "post_merge"):
                         # Preserve original V23 risk near the vehicle, soften
                         # distant/small boxes that often belong to other lanes.
                         current = attenuate_distant_risk(current, area, cfg)
@@ -198,7 +207,7 @@ def main():
                 for side in cameras:
                     frame = frames.get(side)
                     frame = frame.copy() if frame is not None else np.zeros((480,640,3),np.uint8)
-                    if mode in ("roundabout", "post_merge") and side == "left_rear":
+                    if mode in ("roundabout", "roundabout_prearm", "post_merge", "roundabout_done") and side == "left_rear":
                         label = f"WP={latest_wp} REAR LEFT PAUSED ({mode.upper()})"
                     else:
                         label = f"WP={latest_wp} MODE={mode} risk={risk[side]:.2f}"
@@ -226,6 +235,8 @@ def main():
                 rear = 1.0 if "left_rear" in active_sides else 0.0
                 decision = "MERGE_REJECT"
 
+            # Prearm computes real camera observations BEFORE zone entry.
+            # Main does not apply them as a stop outside the active zone.
             # Only a new inference can confirm a safe gap. Never turn
             # repeated timer ticks into three fake accept confirmations.
             if new_inference or (not ready and now - last_log >= 0.5):
