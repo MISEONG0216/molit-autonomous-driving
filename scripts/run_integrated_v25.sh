@@ -38,21 +38,48 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+# Default: ONE main CSV and ONE shared worker log per run.
+# Optional --detailed-logs: per-worker logs plus LiDAR per-scan CSV.
+DETAILED_LOGS=0
+MAIN_ARGS=()
+for arg in "$@"; do
+  if [[ "$arg" == "--detailed-logs" ]]; then
+    DETAILED_LOGS=1
+  else
+    MAIN_ARGS+=("$arg")
+  fi
+done
 STAMP="$(date +%Y%m%d_%H%M%S)"
-echo "[V25] perception logs: logs/v25_*_${STAMP}.log"
-python3 -u src/traffic_light_detector.py --relay-pedestrian >"logs/v25_traffic_${STAMP}.log" 2>&1 &
-PIDS+=("$!")
-python3 -u src/dynamic_pedestrian_worker.py --show >"logs/v25_pedestrian_${STAMP}.log" 2>&1 &
-PIDS+=("$!")
-python3 -u src/lidar/static_avoidance_module.py >"logs/v25_static_${STAMP}.log" 2>&1 &
-PIDS+=("$!")
-python3 -u src/merge_side_camera_worker.py --show >"logs/v25_merge_${STAMP}.log" 2>&1 &
-PIDS+=("$!")
+if [[ "$DETAILED_LOGS" == "1" ]]; then
+  export STATIC_CSV_LOG=1
+  echo "[LOG] detailed mode: main CSV, LiDAR CSV and 4 worker .log files"
+  python3 -u src/traffic_light_detector.py --relay-pedestrian >"logs/v25_traffic_${STAMP}.log" 2>&1 &
+  PIDS+=("$!")
+  python3 -u src/dynamic_pedestrian_worker.py --show >"logs/v25_pedestrian_${STAMP}.log" 2>&1 &
+  PIDS+=("$!")
+  python3 -u src/lidar/static_avoidance_module.py >"logs/v25_static_${STAMP}.log" 2>&1 &
+  PIDS+=("$!")
+  python3 -u src/merge_side_camera_worker.py --show >"logs/v25_merge_${STAMP}.log" 2>&1 &
+  PIDS+=("$!")
+else
+  export STATIC_CSV_LOG=0
+  SESSION_LOG="logs/session_${STAMP}.log"
+  : > "$SESSION_LOG"
+  echo "[LOG] compact mode: integrated CSV + $SESSION_LOG (all worker outputs)"
+  python3 -u src/traffic_light_detector.py --relay-pedestrian >>"$SESSION_LOG" 2>&1 &
+  PIDS+=("$!")
+  python3 -u src/dynamic_pedestrian_worker.py --show >>"$SESSION_LOG" 2>&1 &
+  PIDS+=("$!")
+  python3 -u src/lidar/static_avoidance_module.py >>"$SESSION_LOG" 2>&1 &
+  PIDS+=("$!")
+  python3 -u src/merge_side_camera_worker.py --show >>"$SESSION_LOG" 2>&1 &
+  PIDS+=("$!")
+fi
 sleep 2
 echo "[V25] main starting: --traffic --static --pedestrian --merge (all mission controls enabled)"
-echo "[V25] additional args: $*"
-echo "[V25] check logs/v25_merge_${STAMP}.log if left/left-rear previews do not open."
+echo "[V25] additional args: ${MAIN_ARGS[*]}"
+echo "[V25] if camera previews do not open, check session log or detailed logs."
 python3 src/main_integrated_v1.py \
   --traffic --static --static-control \
   --pedestrian --pedestrian-control \
-  --merge --merge-control --max-speed 57 "$@"
+  --merge --merge-control --max-speed 57 "${MAIN_ARGS[@]}"
