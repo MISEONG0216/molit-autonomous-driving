@@ -132,7 +132,7 @@ def main():
                 last_inferred = {side: 0.0 for side in cameras}
                 for assembler in assemblers.values():
                     assembler.data.clear()
-                if mode == "roundabout":
+                if mode in ("roundabout", "post_merge"):
                     risk["left_rear"] = 0.0
                     frames.pop("left_rear", None)
                 previous_mode = mode
@@ -151,7 +151,7 @@ def main():
                             cam.recvfrom(65535)
                         except BlockingIOError:
                             break
-                    if mode == "roundabout":
+                    if mode in ("roundabout", "post_merge"):
                         frames.pop(side, None)
                     continue
                 jpeg = take_latest(cam, assemblers[side])
@@ -177,7 +177,7 @@ def main():
                         x1, y1, x2, y2, width, height,
                         previous_area_ratio=previous_area[side],
                     )
-                    if mode == "highway_merge":
+                    if mode in ("highway_merge", "post_merge"):
                         # Preserve original V23 risk near the vehicle, soften
                         # distant/small boxes that often belong to other lanes.
                         current = attenuate_distant_risk(current, area, cfg)
@@ -198,8 +198,8 @@ def main():
                 for side in cameras:
                     frame = frames.get(side)
                     frame = frame.copy() if frame is not None else np.zeros((480,640,3),np.uint8)
-                    if mode == "roundabout" and side == "left_rear":
-                        label = f"WP={latest_wp} REAR LEFT PAUSED (ROUNDABOUT)"
+                    if mode in ("roundabout", "post_merge") and side == "left_rear":
+                        label = f"WP={latest_wp} REAR LEFT PAUSED ({mode.upper()})"
                     else:
                         label = f"WP={latest_wp} MODE={mode} risk={risk[side]:.2f}"
                     cv2.putText(frame,label,(8,30),cv2.FONT_HERSHEY_SIMPLEX,0.60,(0,255,255),2)
@@ -210,8 +210,8 @@ def main():
             if not enabled:
                 continue
             now = time.monotonic()
-            # Roundabout: ONLY left camera can veto, rear-left is disabled.
-            # Highway merge: both cameras must have fresh inference.
+            # Roundabout or verified post-merge: left camera only.
+            # Before highway merge completion: both cameras must be fresh.
             ready = all(
                 last_inferred[side] > 0.0 and now-last_inferred[side] < 1.5
                 for side in active_sides
