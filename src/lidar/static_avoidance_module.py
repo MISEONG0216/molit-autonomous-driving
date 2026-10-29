@@ -265,10 +265,53 @@ def main():
                         nearest = int(np.argmin(np.sum(
                             (locked_xy - np.array([ego_x, ego_y]))**2,axis=1
                         )))
-                        if nearest >= len(locked_xy)-4:
-                            shadow_locked_path = None
-                            shadow_side = None
-                        else:
+                        # The main controller may lose its fixed-lookahead
+                        # target several points BEFORE the worker's old
+                        # len-4 release threshold. Check a short remaining
+                        # endpoint window, then release ONLY when fresh
+                        # forward LiDAR proves the lane ahead is clear.
+                        tail_points = int(ego_cfg.get("release_tail_points", 9))
+                        end_distance = float(np.linalg.norm(
+                            locked_xy[-1] - [ego_x, ego_y]
+                        ))
+                        ready_for_release = (
+                            nearest >= len(locked_xy)-tail_points
+                            and end_distance <= float(
+                                ego_cfg.get("release_end_distance_m", 4.5))
+                        )
+                        if ready_for_release:
+                            # Original LiDAR points in vehicle frame.
+                            # Do not release if the box or wall is still in
+                            # the intended lane immediately ahead.
+                            pts = np.asarray(vehicle_points, dtype=float)
+                            half = (float(ego_cfg.get("vehicle_half_width_m", .9))
+                                    + float(ego_cfg.get("margin_m", .45)))
+                            front = pts[
+                                (pts[:, 0] >= 0.8) &
+                                (pts[:, 0] <= float(ego_cfg.get(
+                                    "release_clear_ahead_m", 6.0))) &
+                                (np.abs(pts[:, 1]) <= half) &
+                                (pts[:, 2] >= float(ego_cfg.get("z_min", -1.45))) &
+                                (pts[:, 2] <= float(ego_cfg.get("z_max", 1.25)))
+                            ]
+                            if len(front) < int(ego_cfg.get(
+                                    "release_max_front_points", 5)):
+                                shadow_locked_path = None
+                                shadow_side = None
+                                plan = PlanResult(
+                                    "CLEAR", np.empty((0, 3)), None, None,
+                                    0.0, "EGO_DETOUR_TAIL_RELEASE"
+                                )
+                                shadow_verified = False
+                                latch_state = "EGO_LIDAR_TAIL_RELEASED"
+                            else:
+                                plan = PlanResult(
+                                    "STOP_REQUIRED", np.empty((0,3)), None,
+                                    None, 0.0, "EGO_TAIL_FRONT_NOT_CLEAR"
+                                )
+                                shadow_verified = False
+                                latch_state = "EGO_LIDAR_TAIL_BLOCKED"
+                        if shadow_locked_path is not None:
                             # Revalidate the REMAINING locked route against
                             # the newest vehicle-frame wall returns. Aborting
                             # is safer than swapping sides mid-avoidance.
@@ -306,7 +349,7 @@ def main():
                                 )
                                 shadow_verified = False
                                 latch_state = "EGO_LIDAR_BLOCKED_"+reason
-                    if shadow_locked_path is None:
+                    if shadow_locked_path is None and latch_state != "EGO_LIDAR_TAIL_RELEASED":
                         local = choose_local_detour(vehicle_points, ego_cfg)
                         shadow_verified = local["status"] == "AVOIDING"
                         if shadow_verified:
