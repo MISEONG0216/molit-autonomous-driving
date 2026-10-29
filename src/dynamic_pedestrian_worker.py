@@ -19,6 +19,7 @@ from pathlib import Path
 import numpy as np
 
 from integration.dynamic_pedestrian_io import load_dynamic_zones, in_dynamic_zone
+from integration.highway_follow_io import LANE_ROI_RATIO, in_follow_zone, grade_speed_cap
 
 ROOT = Path(__file__).resolve().parents[1]
 NETWORK = ROOT / "config" / "integration_network.json"
@@ -108,6 +109,7 @@ class JpegStreamAssembler:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--show", action="store_true", help="show overlay window")
+    parser.add_argument("--follow", action="store_true", help="reuse this model for in-lane highway following")
     args = parser.parse_args()
 
     # Heavy imports are deferred, so pure packet/risk tests do not require
@@ -119,9 +121,14 @@ def main():
     with NETWORK.open("r", encoding="utf-8") as f:
         network = json.load(f)
     with MISSION.open("r", encoding="utf-8") as f:
-        mission = json.load(f)["dynamic_pedestrian"]
+        all_missions = json.load(f)
+        mission = all_missions["dynamic_pedestrian"]
+        follow_cfg = all_missions.get("highway_follow", {})
     in_cfg = network["pedestrian_camera_relay"]
     out_cfg = network["pedestrian_result"]
+    follow_out_cfg = network.get("highway_follow_result") if args.follow else None
+    if args.follow and (not follow_out_cfg or follow_out_cfg["bind_ip"] != "127.0.0.1"):
+        raise RuntimeError("highway_follow_result must be configured on localhost")
     gate_cfg = network["pedestrian_gate"]
     zones = load_dynamic_zones(mission, 4430)
     if any(cfg["bind_ip"] != "127.0.0.1" for cfg in (in_cfg, out_cfg, gate_cfg)):
@@ -150,6 +157,9 @@ def main():
     gate.setblocking(False)
     output = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     target = ("127.0.0.1", int(out_cfg["port"]))
+    follow_target = (("127.0.0.1", int(follow_out_cfg["port"]))
+                     if args.follow else None)
+    follow_risk_held = 0.0
     assembler = JpegStreamAssembler()
     frame_number = 0
     depth_cache = None
@@ -163,6 +173,9 @@ def main():
     print(f"[PEDESTRIAN GATE] localhost:{gate_cfg['port']} from main")
     print(f"[PEDESTRIAN] relayed camera 127.0.0.1:{in_cfg['port']}")
     print(f"[PEDESTRIAN] risk decision -> {target}, threshold={threshold:.2f}")
+    if args.follow:
+        print(f"[HIGHWAY FOLLOW] zones={follow_cfg.get('zones_wp')} result={follow_target}")
+        print("[HIGHWAY FOLLOW] one shared front camera, YOLO + MiDaS; lane ROI only")
     print("[CONTROL] No EgoCtrlCmd sender in this process.")
     try:
         while True:
@@ -181,17 +194,19 @@ def main():
                         last_gate_time = time.monotonic()
                 except (ValueError, UnicodeError, TypeError, AttributeError):
                     pass
-            enabled = bool(
-                last_gate_wp is not None
-                and time.monotonic() - last_gate_time <= 1.0
-                and in_dynamic_zone(last_gate_wp, zones)
-            )
+            gate_fresh = (last_gate_wp is not None
+                          and time.monotonic() - last_gate_time <= 1.0)
+            ped_enabled = bool(gate_fresh and in_dynamic_zone(last_gate_wp, zones))
+            follow_enabled = bool(args.follow and gate_fresh
+                                  and in_follow_zone(last_gate_wp, follow_cfg, 4430))
+            enabled = ped_enabled or follow_enabled
             if enabled != previously_enabled:
                 assembler.buffer = b""
                 prev_bbox_areas = []
                 depth_cache = None
+                follow_risk_held = 0.0
                 print(
-                    f"[PEDESTRIAN] ZONE {'ON' if enabled else 'OFF'}"
+                    f"[PEDESTRIAN/FOLLOW] ZONE {'ON' if enabled else 'OFF'}"
                     f" wp={last_gate_wp}"
                 )
             previously_enabled = enabled
@@ -262,7 +277,11 @@ def main():
             # The user requested a pedestrian-specific STOP module, so only
             # COCO person(0) contributes to the transmitted stopping decision.
             max_person_risk = 0.0
+            max_vehicle_risk = 0.0
             persons = 0
+            vehicles = 0
+            lane_poly = (np.asarray(LANE_ROI_RATIO, dtype=np.float32)
+                         * np.asarray([w, h], dtype=np.float32)).astype(np.int32)
             curr_bbox_areas = []
             for idx, (x1, y1, x2, y2, conf, cls) in enumerate(detections):
                 bbox_area = (x2 - x1) * (y2 - y1)
@@ -283,9 +302,15 @@ def main():
                 risk = clamp01(
                     W_DEPTH * depth + W_AREA * birdview + W_APPROACH * approach
                 )
-                if cls == 0:
+                if cls == 0 and ped_enabled:
                     persons += 1
                     max_person_risk = max(max_person_risk, risk)
+                if cls in (2, 5, 7) and follow_enabled:
+                    bottom_center = ((x1+x2)*0.5, y2)
+                    in_lane = cv2.pointPolygonTest(lane_poly, bottom_center, False) >= 0
+                    if in_lane:
+                        vehicles += 1
+                        max_vehicle_risk = max(max_vehicle_risk, risk)
                 if args.show:
                     color = (0, 0, 255) if cls == 0 and risk >= threshold else (0, 200, 0)
                     cv2.rectangle(
@@ -300,31 +325,52 @@ def main():
 
             stop = max_person_risk >= threshold
             decision = "EMERGENCY_STOP" if stop else "DRIVE_FORWARD"
-            packet = {
-                "status": "STOP_REQUIRED" if stop else "CLEAR",
-                "decision": decision,
-                "risk": round(max_person_risk, 4),
-                "person_count": persons,
-                "frame": frame_number,
-                "waypoint_index": last_gate_wp,
-            }
-            output.sendto(
-                json.dumps(packet, separators=(",", ":")).encode("utf-8"),
-                target,
-            )
-            if (decision, persons) != last_report:
-                print(
-                    f"[PEDESTRIAN] frame={frame_number} person={persons} "
-                    f"risk={max_person_risk:.3f} -> {decision}"
+            if ped_enabled:
+                packet = {
+                    "status": "STOP_REQUIRED" if stop else "CLEAR",
+                    "decision": decision,
+                    "risk": round(max_person_risk, 4),
+                    "person_count": persons,
+                    "frame": frame_number,
+                    "waypoint_index": last_gate_wp,
+                }
+                output.sendto(
+                    json.dumps(packet, separators=(",", ":")).encode("utf-8"),
+                    target,
                 )
-                last_report = (decision, persons)
+                if (decision, persons) != last_report:
+                    print(
+                        f"[PEDESTRIAN] frame={frame_number} person={persons} "
+                        f"risk={max_person_risk:.3f} -> {decision}"
+                    )
+                    last_report = (decision, persons)
+            if follow_enabled:
+                # Immediate rise, controlled release. Prevent the rapidly
+                # alternating 0.1/0.58 scores seen in prior pedestrian logs.
+                follow_risk_held = max(max_vehicle_risk, 0.80 * follow_risk_held)
+                grade, cap = grade_speed_cap(follow_risk_held)
+                follow_packet = {
+                    "kind": "HIGHWAY_FOLLOW", "waypoint_index": last_gate_wp,
+                    "frame": frame_number, "risk": round(follow_risk_held, 4),
+                    "vehicles": vehicles,
+                }
+                output.sendto(json.dumps(
+                    follow_packet, separators=(",", ":")).encode("utf-8"),
+                    follow_target)
+                if frame_number % 15 == 0:
+                    print(f"[HIGHWAY FOLLOW] wp={last_gate_wp} vehicles={vehicles}"
+                          f" risk={follow_risk_held:.3f} grade={grade} cap={cap:g}km/h")
             if args.show:
-                cv2.putText(
-                    frame, f"{decision} | person={persons} risk={max_person_risk:.2f}",
-                    (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.8,
-                    (0, 0, 255) if stop else (0, 255, 0), 2,
-                )
-                cv2.imshow("MORAI Pedestrian Risk (relayed camera)", frame)
+                text = (f"FOLLOW wp={last_gate_wp} grade={grade} "
+                        f"risk={follow_risk_held:.2f} vehicles={vehicles}"
+                        if follow_enabled else
+                        f"{decision} | person={persons} risk={max_person_risk:.2f}")
+                if follow_enabled:
+                    cv2.polylines(frame, [lane_poly], True, (255, 255, 0), 2)
+                cv2.putText(frame, text, (20, 35),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.70,
+                            (0, 0, 255) if stop and ped_enabled else (0, 255, 0), 2)
+                cv2.imshow("MORAI Pedestrian / Highway Follow", frame)
                 if cv2.waitKey(1) & 0xff in (ord("q"), 27):
                     break
     except KeyboardInterrupt:
