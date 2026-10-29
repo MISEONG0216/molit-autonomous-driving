@@ -173,6 +173,7 @@ def main():
     last_wait_log = 0.0
     last_gate_time = 0.0
     last_gate_wp = None
+    last_gate_shadow = False
     previously_enabled = False
     print(f"[PEDESTRIAN ZONE] {zones} -- inference only when inside")
     print(f"[PEDESTRIAN GATE] localhost:{gate_cfg['port']} from main")
@@ -196,6 +197,7 @@ def main():
                     wp = payload.get("waypoint_index")
                     if type(wp) is int and 0 <= wp < 4430:
                         last_gate_wp = wp
+                        last_gate_shadow = payload.get("gps_shadow") is True
                         last_gate_time = time.monotonic()
                 except (ValueError, UnicodeError, TypeError, AttributeError):
                     pass
@@ -204,7 +206,7 @@ def main():
             ped_prearm_wp = max(0, int(mission.get("prewarm_wp", 0)))
             follow_prearm_wp = max(0, int(follow_cfg.get("prewarm_wp", 0)))
             ped_enabled = bool(gate_fresh and (
-                in_dynamic_zone(last_gate_wp, zones) or
+                last_gate_shadow or in_dynamic_zone(last_gate_wp, zones) or
                 any(start-ped_prearm_wp <= last_gate_wp < start
                     for start, end in zones)
             ))
