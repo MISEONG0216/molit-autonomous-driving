@@ -7,3 +7,4 @@ torchvision
 pytorch-lightning
 ultralytics
 pillow
+scikit-learn
