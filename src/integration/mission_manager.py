@@ -399,7 +399,9 @@ class MissionManager:
                             self.roundabout_safe_released_wp + int(
                                 self.merge_cfg.get("roundabout_progress_wp", 10)
                             ),
-                        ) and not self.merge_stop_latched):
+                        ) and not self.merge_stop_latched
+                        and merge_fresh and merge_state == "MERGE_ACCEPT"
+                        and merge_risk < float(self.merge_cfg.get("risk_stop_threshold", 0.60))):
                     self.roundabout_done = True
                 # Roundabout keeps the existing conservative curve/zone speed.
                 # Highway merge: yellow (risk below STOP threshold) no longer
@@ -427,6 +429,7 @@ class MissionManager:
                 if dangerous and not self.roundabout_done:
                     if is_roundabout:
                         self.roundabout_had_stop = True
+                        self.roundabout_safe_released_wp = None
                     self.merge_stop_latched = True
                     self.merge_accept_count = 0
                     self.merge_last_accept_update = 0.0
