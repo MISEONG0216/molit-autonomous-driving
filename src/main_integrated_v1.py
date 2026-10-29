@@ -119,7 +119,7 @@ def main():
     parser.add_argument("--drive", action="store_true")
     parser.add_argument(
         "--team-lane-tuning", action="store_true",
-        help="opt-in team WP tracking offsets + conservative speed caps; test <=30 km/h",
+        help="opt-in team WP tracking offsets with V38 0..120 km/h requested max",
     )
     parser.add_argument("--gps-shadow", action="store_true",
                         help="on GPS loss use lane-center steering + existing LiDAR/person safety")
@@ -372,7 +372,7 @@ def main():
     print(f"[MODE] {'DRIVE' if args.drive else 'DRY-RUN'}")
     if args.team_lane_tuning:
         print("[TEAM LANE] ON: path COPY for GPS Pure Pursuit only; official WP/missions unchanged")
-        print("[TEAM LANE] 20km/h in shifted segments; 8km/h roundabout; <=30km/h for trials")
+        print("[TEAM LANE] 20km/h in shifted segments; 8km/h roundabout; original V38 highway 120 profile preserved")
         print("[TEAM LANE] Shadow camera steering, LiDAR local path, traffic safety unchanged")
     if args.gps_shadow:
         print("[GPS SHADOW] ON: lane steering replaces global PP on stale/missing GPS")
