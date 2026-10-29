@@ -21,6 +21,9 @@ class MissionManager:
         self.left_arrow = False
         self.signal_last_update = 0.0
         self.red_latched = False
+        # Once a configured RED creep target is reached, do not resume creeping
+        # if GPS nearest-waypoint estimates fluctuate backward.
+        self.red_creep_reached_stops = set()
         self.go_release_count = 0
         self._last_go_counted_update = 0.0
         # WP620 green-pass confirmation uses distinct fresh camera packets.
@@ -298,10 +301,32 @@ class MissionManager:
             # Limit speed near each traffic light, regardless of its colour.
             # Only a confirmed STOP triggers full braking; UNKNOWN alone does not.
             if self.red_latched:
-                target_speed = 0.0
-                full_brake = True
-                traffic_state = "FULL_BRAKE_RED"
-                reasons.append("traffic_full_brake")
+                creep_until = self.traffic_cfg.get("red_creep_targets_wp", {}).get(
+                    str(self.hold_stop_index)
+                )
+                if creep_until is not None and int(nearest_index) >= int(creep_until):
+                    self.red_creep_reached_stops.add(self.hold_stop_index)
+                creep_active = (
+                    creep_until is not None
+                    and self.hold_stop_index == active_stop
+                    and self.hold_stop_index not in self.red_creep_reached_stops
+                    and int(nearest_index) < int(creep_until)
+                )
+                if creep_active:
+                    # RED remains latched, but creep only up to the configured
+                    # point. Other mission STOPs are enforced by the main loop.
+                    target_speed = min(
+                        target_speed,
+                        float(self.traffic_cfg.get("red_creep_speed_kmh", 5.0)),
+                    )
+                    traffic_approach = True
+                    traffic_state = f"RED_CREEP_{self.hold_stop_index}"
+                    reasons.append("traffic_red_creep")
+                else:
+                    target_speed = 0.0
+                    full_brake = True
+                    traffic_state = "FULL_BRAKE_RED"
+                    reasons.append("traffic_full_brake")
             elif stop_distance_m is not None:
                 override = self.traffic_cfg.get("stop_overrides", {}).get(
                     str(active_stop), {}
