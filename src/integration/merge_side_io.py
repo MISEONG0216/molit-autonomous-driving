@@ -81,14 +81,21 @@ def merge_camera_mode(wp, cfg, all_zones=False):
     for pair in cfg.get("roundabout_zones", ()):
         if len(pair) == 2 and pair[0] <= wp <= pair[1]:
             return "roundabout"
+    # Latest MORAI capture: first merge completed by WP2538.
+    # After this point, rear camera no longer vetoes continued forward motion.
+    # Second merge's completion WP is unknown and stays protected.
+    completed_at = cfg.get("rear_camera_release_wp_by_zone", {})
     for pair in cfg.get("zones", ()):
         if len(pair) == 2 and pair[0] <= wp <= pair[1]:
+            release_wp = completed_at.get(str(pair[0]))
+            if type(release_wp) is int and pair[0] < release_wp <= pair[1] and wp >= release_wp:
+                return "post_merge"
             return "highway_merge"
     return "highway_merge" if all_zones else "off"
 
 
 def active_merge_cameras(mode):
-    if mode == "roundabout":
+    if mode in ("roundabout", "post_merge"):
         return ("left",)
     if mode == "highway_merge":
         return ("left", "left_rear")
