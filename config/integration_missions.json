@@ -88,5 +88,32 @@
     "clear_confirm_frames": 3,
     "zone_note": "User-confirmed by manual MORAI waypoint survey: pedestrian/dynamic-obstacle mission WP720-1050. WP720-760 overlaps static-avoidance zone WP590-760; both safety constraints may apply in that overlap.",
     "note": "Observe forward camera YOLO person(0) + MiDaS risk from provided script; stop in zone when risk>=0.50. No direct controls from vision worker. Fail stop on missing/stale results while active. Other detected COCO vehicle classes are display-only."
+  },
+  "highway_follow": {
+    "zones_wp": [
+      [
+        2570,
+        3040
+      ],
+      [
+        3200,
+        null
+      ]
+    ],
+    "verified_highway_speed_zones_wp": [
+      [
+        2570,
+        3040
+      ]
+    ],
+    "tollgate_exit_wp": null,
+    "risk_result_timeout_sec": 1.5,
+    "missing_camera_cap_kmh": 15,
+    "fast_lane_limit_kmh": 120,
+    "normal_road_max_kmh": 57,
+    "assumed_max_lateral_accel_mps2": 2,
+    "assumed_preview_decel_mps2": 2,
+    "assumed_profile_accel_mps2": 3,
+    "note": "Frontend in-lane ROI from user code. Second WP3200-tollgate end is NOT specified: follow speed constraint remains through path end but 120kmh is DISABLED on segment 2 until verified tollgate_exit_wp. High-speed control requires explicit --max-speed 120 and MORAI staged validation; never calibrated TTC."
   }
 }
