@@ -70,7 +70,7 @@ def format_result(side, rear, decision):
     )).encode("ascii")
 
 
-def merge_camera_mode(wp, cfg, all_zones=False):
+def merge_camera_mode(wp, cfg, all_zones=False, roundabout_done=False):
     """Return enabled camera mode. Roundabout uses LEFT only.
 
     Outside known zones --merge-all is an explicit debugging override,
@@ -78,9 +78,12 @@ def merge_camera_mode(wp, cfg, all_zones=False):
     """
     if type(wp) is not int or wp < 0:
         return "off"
+    prewarm = max(0, int(cfg.get("prewarm_wp", 0)))
     for pair in cfg.get("roundabout_zones", ()):
         if len(pair) == 2 and pair[0] <= wp <= pair[1]:
-            return "roundabout"
+            return "roundabout_done" if roundabout_done else "roundabout"
+        if len(pair) == 2 and pair[0] - prewarm <= wp < pair[0]:
+            return "roundabout_prearm"
     # Latest MORAI capture: first merge completed by WP2538.
     # After this point, rear camera no longer vetoes continued forward motion.
     # Second merge's completion WP is unknown and stays protected.
@@ -91,13 +94,15 @@ def merge_camera_mode(wp, cfg, all_zones=False):
             if type(release_wp) is int and pair[0] < release_wp <= pair[1] and wp >= release_wp:
                 return "post_merge"
             return "highway_merge"
+        if len(pair) == 2 and pair[0] - prewarm <= wp < pair[0]:
+            return "highway_prearm"
     return "highway_merge" if all_zones else "off"
 
 
 def active_merge_cameras(mode):
-    if mode in ("roundabout", "post_merge"):
+    if mode in ("roundabout", "roundabout_prearm", "post_merge"):
         return ("left",)
-    if mode == "highway_merge":
+    if mode in ("highway_merge", "highway_prearm"):
         return ("left", "left_rear")
     return ()
 
