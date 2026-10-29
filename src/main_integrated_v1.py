@@ -446,12 +446,10 @@ def main():
             lat = gps_data.gprmc.lat
             lon = gps_data.gprmc.lon
             position = base.gps_to_local(lat, lon)
-            if position is None:
+            if position is None and not args.gps_shadow:
                 print("[WAIT] GPS")
                 time.sleep(0.1)
                 continue
-
-            current_x, current_y = position
 
             imu_data = imu_receiver.get_data()
             if (
@@ -471,17 +469,48 @@ def main():
                 imu_data.ori_w,
             )
 
-            if pose_tx is not None:
-                pose_tx.sendto(
-                    json.dumps({"x": current_x, "y": current_y, "yaw": yaw}).encode("ascii"),
-                    pose_target,
-                )
-
             current_speed_kmh, speed_valid = speed_receiver.read()
             if not speed_valid:
+                if args.drive and ctrl_sender is not None:
+                    base.send_stop(ctrl_sender)
                 print("[WAIT] Competition Vehicle Status")
                 time.sleep(0.05)
                 continue
+
+            gps_mode = "GPS"
+            shadow_sec = 0.0
+            if args.gps_shadow:
+                gps_mode, position, shadow_sec = gps_shadow_pose.update(
+                    position, yaw, current_speed_kmh, time.time()
+                )
+            if position is None:
+                # Never guess an absolute pose before the first valid GPS fix.
+                if args.drive and ctrl_sender is not None:
+                    base.send_stop(ctrl_sender)
+                print("[GPS SHADOW] NO_FIX => FULL STOP (waiting for first GPS position)")
+                time.sleep(0.05)
+                continue
+            current_x, current_y = position
+            shadow_active = args.gps_shadow and gps_mode in ("SHADOW", "STOP")
+            lane_age_sec = (max(0.0, time.time()-lane_updated_at)
+                            if lane_updated_at > 0.0 else float("inf"))
+            lane_fresh = bool(
+                args.gps_shadow and lane_result["valid"]
+                and lane_age_sec <= float(shadow_cfg.get("lane_result_timeout_sec", 0.8))
+                and lane_result["confidence"] >= float(
+                    shadow_cfg.get("min_confidence", 0.35))
+            )
+            shadow_stop = bool(
+                shadow_active and (gps_mode == "STOP" or not lane_fresh)
+            )
+            if pose_tx is not None:
+                pose_tx.sendto(
+                    json.dumps({
+                        "x":current_x, "y":current_y, "yaw":yaw,
+                        "gps_shadow":bool(shadow_active),
+                    }).encode("ascii"),
+                    pose_target,
+                )
 
             nearest_index = base.find_nearest_waypoint(
                 global_path,
@@ -509,10 +538,15 @@ def main():
                     1.5, max(0.0, float(merge_cfg.get("prewarm_result_age_sec", 1.0)))
                 )
             merge_was_in_zone = merge_in_zone
-            pedestrian_in_zone = in_dynamic_zone(nearest_index, pedestrian_zones)
+            pedestrian_in_zone = (
+                in_dynamic_zone(nearest_index, pedestrian_zones) or shadow_active
+            )
             if pedestrian_gate_tx is not None:
                 pedestrian_gate_tx.sendto(
-                    json.dumps({"waypoint_index": nearest_index}).encode("ascii"),
+                    json.dumps({
+                        "waypoint_index":nearest_index,
+                        "gps_shadow":bool(shadow_active),
+                    }).encode("ascii"),
                     pedestrian_gate_target,
                 )
             if pedestrian_in_zone and not pedestrian_was_in_zone:
@@ -535,16 +569,26 @@ def main():
                 nearest_x - current_x,
                 nearest_y - current_y,
             )
+            if shadow_active and nearest_distance > float(
+                    shadow_cfg.get("max_shadow_path_offset_m", 7.0)):
+                shadow_stop = True
 
-            result = base.calculate_pure_pursuit(
-                global_path,
-                nearest_index,
-                current_x,
-                current_y,
-                yaw,
+            # GPS mode uses the unchanged V7 Pure Pursuit.
+            # Shadow mode uses camera lane-center as PRIMARY guidance.
+            # The dead-reckoned pose is only for LiDAR path alignment and
+            # rough mission gates, never for base steering.
+            result = None if shadow_active else base.calculate_pure_pursuit(
+                global_path, nearest_index, current_x, current_y, yaw,
             )
-
-            if result is None:
+            if shadow_active:
+                base_steering = (
+                    float(lane_result["steering"]) if lane_fresh else 0.0
+                )
+                base_target = (
+                    min(float(shadow_cfg.get("shadow_speed_kmh", 12.0)),
+                        float(args.max_speed)) if not shadow_stop else 0.0
+                )
+            elif result is None:
                 base_steering = 0.0
                 base_target = 0.0
             else:
