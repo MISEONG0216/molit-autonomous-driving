@@ -80,7 +80,7 @@ class MergeCompleteV29Test(unittest.TestCase):
         manager=(ROOT/"src/integration/mission_manager.py").read_text(encoding="utf-8")
         ast.parse(worker)
         ast.parse(manager)
-        self.assertIn('mode in ("roundabout", "post_merge")',worker)
+        self.assertIn('"roundabout_done"',worker)
         self.assertIn('"highway_yellow_no_speed_cap"',manager)
         self.assertNotIn("EgoCtrlCmd(",worker)
         self.assertNotIn('("right", 9295)',worker)
