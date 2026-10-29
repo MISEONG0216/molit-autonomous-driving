@@ -77,11 +77,33 @@ class TeamLaneTuningV38Tests(unittest.TestCase):
         self.assertAlmostEqual(float(self.caps[3500]), 30.0)
 
     def test_high_speed_and_different_path_rejected(self):
-        for bad in (0.0, 30.01, 57.0, float("nan"), float("inf")):
+        for bad in (0.0, 120.01, float("nan"), float("inf")):
             with self.subTest(kmh=bad), self.assertRaises(ValueError):
                 build_team_lane_plan(self.original, bad)
         with self.assertRaises(ValueError):
             build_team_lane_plan(self.original[:-1], 10.0)
+
+    def test_original_v38_120_highway_speed_profile_available(self):
+        tracking, caps, shifts = build_team_lane_plan(self.original, 120.0)
+        self.assertTrue(np.array_equal(tracking, self.tracking))
+        self.assertFalse(np.shares_memory(tracking, self.original))
+        self.assertTrue(np.all((0.0 < caps) & (caps <= 120.0)))
+        # These original V38 fast-zone WPs have NO team lane-shift: a
+        # roundabout release ramp must not throttle their 120 target.
+        for wp in (2570, 2700, 2850, 3040):
+            with self.subTest(wp=wp):
+                self.assertLess(shifts[wp], 1e-8)
+                self.assertAlmostEqual(float(caps[wp]), 120.0)
+        # Local team offsets remain deliberately limited.
+        self.assertAlmostEqual(float(caps[160]), 20.0)
+        self.assertAlmostEqual(float(caps[1578]), 20.0)
+        self.assertAlmostEqual(float(caps[1800]), 8.0)
+        self.assertAlmostEqual(float(caps[1877]), 8.0)
+        self.assertAlmostEqual(float(caps[4150]), 20.0)
+        # Only existing V38 highway_profile may authorize actual 120.
+        self.assertIn("build_highway_profile(", (
+            ROOT / "src" / "main_integrated_v1.py"
+        ).read_text(encoding="utf-8"))
 
     def test_five_kmh_stage_never_accelerates_above_request(self):
         _path, caps, _shift = build_team_lane_plan(self.original, 5.0)
