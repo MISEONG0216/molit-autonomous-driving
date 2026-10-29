@@ -185,6 +185,7 @@
     "dynamic_stop_half_width_m": 1.8,
     "emergency_min_forward_m": 1.5,
     "emergency_stop_ahead_m": 6,
-    "emergency_min_points": 5
+    "emergency_min_points": 5,
+    "max_verified_scan_age_sec": 2.4
   }
 }
