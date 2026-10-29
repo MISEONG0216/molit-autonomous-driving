@@ -460,6 +460,7 @@ def main():
                     json.dumps({
                         "waypoint_index": nearest_index,
                         "merge_all": bool(args.merge_all),
+                        "roundabout_done": bool(mission_manager.roundabout_done),
                     }).encode("ascii"),
                     merge_gate_target,
                 )
@@ -469,7 +470,11 @@ def main():
                 start <= nearest_index <= end for start, end in merge_ranges
             )
             if merge_in_zone and not merge_was_in_zone:
-                merge_zone_entered_at = time.time()
+                # Permit only recent prewarmed camera frames (not stale
+                # observations from the previous intersection/mission).
+                merge_zone_entered_at = time.time() - min(
+                    1.5, max(0.0, float(merge_cfg.get("prewarm_result_age_sec", 1.0)))
+                )
             merge_was_in_zone = merge_in_zone
             pedestrian_in_zone = in_dynamic_zone(nearest_index, pedestrian_zones)
             if pedestrian_gate_tx is not None:
@@ -478,7 +483,9 @@ def main():
                     pedestrian_gate_target,
                 )
             if pedestrian_in_zone and not pedestrian_was_in_zone:
-                pedestrian_zone_entered_at = time.time()
+                pedestrian_zone_entered_at = time.time() - min(
+                    1.5, max(0.0, float(pedestrian_cfg.get("prewarm_result_age_sec", 1.0)))
+                )
                 pedestrian_latch.reset()
             elif not pedestrian_in_zone and pedestrian_was_in_zone:
                 pedestrian_latch.reset()
@@ -512,7 +519,7 @@ def main():
                 traffic_enabled=args.traffic,
                 merge_enabled=args.merge,
                 merge_control_enabled=args.merge_control,
-                # Ignore an old MERGE_ACCEPT from before this zone entry.
+                # Accept only recent prewarmed observations from this approach.
                 merge_result=(merge if merge_updated_at >= merge_zone_entered_at else parse_merge_message(None)),
                 merge_updated_at=(merge_updated_at if merge_updated_at >= merge_zone_entered_at else 0.0),
                 merge_all=args.merge_all,
@@ -528,7 +535,9 @@ def main():
             follow_in_zone = in_follow_zone(
                 nearest_index, follow_cfg, len(global_path))
             if follow_in_zone and not follow_was_in_zone:
-                follow_zone_entered_at = time.time()
+                follow_zone_entered_at = time.time() - min(
+                    1.5, max(0.0, float(follow_cfg.get("prewarm_result_age_sec", 1.0)))
+                )
             follow_was_in_zone = follow_in_zone
             follow_age = (max(0.0, time.time() - follow_updated_at)
                           if follow_updated_at > 0.0 else float("inf"))
@@ -561,9 +570,16 @@ def main():
                 and pedestrian_updated_at >= pedestrian_zone_entered_at
                 and pedestrian_age <= pedestrian_timeout_sec
                 and pedestrian_result.get("waypoint_index") is not None
-                and in_dynamic_zone(
-                    pedestrian_result["waypoint_index"], pedestrian_zones
+                and (
+                    in_dynamic_zone(
+                        pedestrian_result["waypoint_index"], pedestrian_zones
+                    ) or any(
+                        start - max(0, int(pedestrian_cfg.get("prewarm_wp", 0)))
+                        <= pedestrian_result["waypoint_index"] < start
+                        for start, end in pedestrian_zones
+                    )
                 )
+                and abs(pedestrian_result["waypoint_index"] - nearest_index) <= 30
             )
             if args.pedestrian and pedestrian_in_zone:
                 pedestrian_latch.update(
