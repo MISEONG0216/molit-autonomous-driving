@@ -50,6 +50,7 @@ from integration.dynamic_pedestrian_io import (
 from integration.gps_shadow_io import GpsShadowPose
 from integration.gps_shadow_lane import parse_lane_result
 from integration.shadow_tail_io import shadow_tail_steering
+from integration.team_lane_tuning import build_team_lane_plan
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -108,6 +109,7 @@ def open_log():
         "follow_speed_cap_kmh", "follow_age_sec", "follow_vehicles",
         "gps_mode", "gps_shadow_sec", "lane_valid", "lane_confidence",
         "lane_steering_rad", "shadow_stop",
+        "team_lane_tuning", "team_path_shift_m", "team_speed_cap_kmh",
     ])
     return path, f, w
 
@@ -115,6 +117,10 @@ def open_log():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--drive", action="store_true")
+    parser.add_argument(
+        "--team-lane-tuning", action="store_true",
+        help="opt-in team WP tracking offsets + conservative speed caps; test <=30 km/h",
+    )
     parser.add_argument("--gps-shadow", action="store_true",
                         help="on GPS loss use lane-center steering + existing LiDAR/person safety")
     parser.add_argument(
@@ -181,6 +187,18 @@ def main():
 
     # Importing V7 already applies the validated V7 monkey-patches.
     global_path = base.load_path(base.PATH_FILE)
+    # Team V20/V22 measured candidate geometry: only a PP tracking COPY.
+    # Without the explicit flag, V38 uses its original official global path.
+    tracking_path = global_path
+    team_speed_caps = None
+    team_shift_m = None
+    if args.team_lane_tuning:
+        try:
+            tracking_path, team_speed_caps, team_shift_m = build_team_lane_plan(
+                global_path, args.max_speed,
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
     # Preserve the V7 <=57 baseline; >57 only in explicitly verified WPs
     # and ONLY when following perception/control is enabled.
     target_profile, radius_profile, full_profile = (
@@ -352,6 +370,10 @@ def main():
     print("[BASE] validated V7 import chain")
     print("[CTRL] single EgoCtrlCmd sender / ctrl_mode=2 / cmd_type=1")
     print(f"[MODE] {'DRIVE' if args.drive else 'DRY-RUN'}")
+    if args.team_lane_tuning:
+        print("[TEAM LANE] ON: path COPY for GPS Pure Pursuit only; official WP/missions unchanged")
+        print("[TEAM LANE] 20km/h in shifted segments; 8km/h roundabout; <=30km/h for trials")
+        print("[TEAM LANE] Shadow camera steering, LiDAR local path, traffic safety unchanged")
     if args.gps_shadow:
         print("[GPS SHADOW] ON: lane steering replaces global PP on stale/missing GPS")
         print("[GPS SHADOW] existing pedestrian STOP and LiDAR local path retain priority")
@@ -581,7 +603,7 @@ def main():
             # The dead-reckoned pose is only for LiDAR path alignment and
             # rough mission gates, never for base steering.
             result = None if shadow_active else base.calculate_pure_pursuit(
-                global_path, nearest_index, current_x, current_y, yaw,
+                tracking_path, nearest_index, current_x, current_y, yaw,
             )
             if shadow_active:
                 base_steering = (
@@ -618,6 +640,12 @@ def main():
 
             target_speed_kmh = mission["target_speed_kmh"]
             steering = mission["steering"]
+            if team_speed_caps is not None:
+                # Never raise a mission/V7 target; existing STOP priority is kept.
+                team_cap = float(team_speed_caps[nearest_index])
+                if target_speed_kmh > team_cap:
+                    target_speed_kmh = team_cap
+                    mission["reasons"].append("team_lane_speed_cap")
 
             # GRADED highway following, no arbitrary full brake on an image
             # score. Other mission STOPs retain precedence. Stale data means
@@ -928,6 +956,9 @@ def main():
                 gps_mode, f"{shadow_sec:.3f}",
                 int(lane_fresh), f"{lane_result['confidence']:.3f}",
                 f"{lane_result['steering']:.4f}", int(shadow_stop),
+                int(args.team_lane_tuning),
+                f"{float(team_shift_m[nearest_index]):.3f}" if team_shift_m is not None else "",
+                f"{float(team_speed_caps[nearest_index]):.3f}" if team_speed_caps is not None else "",
             ])
 
             print("\033[2J\033[H", end="")
@@ -936,6 +967,10 @@ def main():
             print("====================================================")
             print(f"GPS         : {lat:.6f}, {lon:.6f} / MODE={gps_mode}"
                   f" / outage={shadow_sec:.1f}s")
+            if args.team_lane_tuning:
+                print(f"TEAM PATH   : shift={team_shift_m[nearest_index]:.3f}m "
+                      f"/ cap={team_speed_caps[nearest_index]:.1f}km/h "
+                      f"/ steering={'CAMERA' if shadow_active else 'REFINED_PP'}")
             print(f"LANE        : fresh={lane_fresh} conf={lane_result['confidence']:.2f}"
                   f" steer={lane_result['steering']:.3f} / SHADOW_STOP={shadow_stop}")
             print(
