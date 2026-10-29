@@ -62,6 +62,15 @@ from integration.roundabout_early_steer import (
     RAMP_OUT_END_WP as EARLY_RIGHT_END_WP,
     MAX_EXTRA_RIGHT_DEG,
 )
+from integration.roundabout_recovery_steer import (
+    apply_recovery_right_steering,
+    signed_left_error_m,
+    START_WP as RECOVERY_START_WP,
+    FULL_START_WP as RECOVERY_FULL_START_WP,
+    FULL_END_WP as RECOVERY_FULL_END_WP,
+    END_WP as RECOVERY_END_WP,
+    MAX_EXTRA_RIGHT_DEG as MAX_RECOVERY_RIGHT_DEG,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -117,6 +126,7 @@ def open_log():
         "roundabout_right_offset_m",
         "roundabout_early_right_deg",
         "roundabout_preassist_steering_deg",
+        "roundabout_recovery_right_deg", "official_signed_left_error_m",
     ])
     return path, f, w
 
@@ -164,6 +174,11 @@ def main():
         help="opt-in limited extra RIGHT steering at WP1843-1866 "
              "(0=OFF, test 4.0deg initially)",
     )
+    parser.add_argument(
+        "--roundabout-recovery-right-deg", type=float, default=0.0,
+        help="optional lateral-error-gated extra RIGHT steering at WP1862-1891; "
+             "0=OFF (test 2.0deg after the earlier 4.0deg assist)",
+    )
     args = parser.parse_args()
 
     if args.merge_control and not args.merge:
@@ -178,6 +193,8 @@ def main():
         parser.error(f"--roundabout-offset-m must be between 0 and {MAX_ROUNDABOUT_OFFSET_M:.2f}")
     if not math.isfinite(args.roundabout_early_right_deg) or not (0.0 <= args.roundabout_early_right_deg <= MAX_EXTRA_RIGHT_DEG):
         parser.error(f"--roundabout-early-right-deg must be 0..{MAX_EXTRA_RIGHT_DEG:.1f}")
+    if not math.isfinite(args.roundabout_recovery_right_deg) or not (0.0 <= args.roundabout_recovery_right_deg <= MAX_RECOVERY_RIGHT_DEG):
+        parser.error(f"--roundabout-recovery-right-deg must be 0..{MAX_RECOVERY_RIGHT_DEG:.1f}")
 
     network = load_json(NETWORK_FILE)
     missions = load_json(MISSION_FILE)
@@ -301,6 +318,12 @@ def main():
         f"ramp WP{EARLY_RIGHT_BEGIN_WP}-{EARLY_RIGHT_FULL_START_WP}, "
         f"full WP{EARLY_RIGHT_FULL_START_WP}-{EARLY_RIGHT_FULL_END_WP}, "
         f"release by WP{EARLY_RIGHT_END_WP}; zero=original V7"
+    )
+    print(
+        f"[ROUNDABOUT RECOVERY RIGHT] max={args.roundabout_recovery_right_deg:.1f}deg, "
+        f"ramp WP{RECOVERY_START_WP}-{RECOVERY_FULL_START_WP}, "
+        f"hold WP{RECOVERY_FULL_START_WP}-{RECOVERY_FULL_END_WP}, "
+        f"release WP{RECOVERY_END_WP}; LEFT-of-path gating enabled"
     )
     print("[CTRL] single EgoCtrlCmd sender / ctrl_mode=2 / cmd_type=1")
     print(f"[MODE] {'DRIVE' if args.drive else 'DRY-RUN'}")
@@ -527,6 +550,31 @@ def main():
                 if early_right_applied_deg > 0.001:
                     mission["reasons"].append("roundabout_early_right_steer")
 
+            # Additional exit recovery: right-steer only while the ego vehicle
+            # is actually LEFT of the original path. Smooth WP and error gates
+            # avoid continued right steering after crossing the path centre.
+            recovery_applied_deg = 0.0
+            recovery_left_error_m = signed_left_error_m(
+                global_path, nearest_index, current_x, current_y,
+            )
+            if (
+                args.roundabout_recovery_right_deg > 0.0
+                and result is not None
+                and not static_active
+                and not static_stop
+                and not mission["traffic_full_brake"]
+                and not (args.merge_control and mission["merge_stop"])
+            ):
+                steering, recovery_applied_deg, recovery_left_error_m = (
+                    apply_recovery_right_steering(
+                        steering, global_path, nearest_index,
+                        current_x, current_y,
+                        args.roundabout_recovery_right_deg,
+                    )
+                )
+                if recovery_applied_deg > 0.001:
+                    mission["reasons"].append("roundabout_recovery_right_steer")
+
             (
                 desired_accel,
                 desired_brake,
@@ -642,6 +690,8 @@ def main():
                 f"{current_roundabout_right_offset_m:.3f}",
                 f"{early_right_applied_deg:.3f}",
                 f"{math.degrees(preassist_steering):.3f}",
+                f"{recovery_applied_deg:.3f}",
+                f"{recovery_left_error_m:.3f}",
             ])
 
             print("\033[2J\033[H", end="")
@@ -669,6 +719,11 @@ def main():
                 print(
                     f"EARLY RIGHT : +{early_right_applied_deg:.2f} deg "
                     f"(right only) / original steer {math.degrees(preassist_steering):+.2f} deg"
+                )
+            if args.roundabout_recovery_right_deg > 0.0:
+                print(
+                    f"EXIT RECOVERY: +{recovery_applied_deg:.2f} deg RIGHT / "
+                    f"original left error {recovery_left_error_m:+.3f} m"
                 )
             print(f"BASE TARGET : {base_target:.2f} km/h")
             print(f"FINAL TARGET: {target_speed_kmh:.2f} km/h")
