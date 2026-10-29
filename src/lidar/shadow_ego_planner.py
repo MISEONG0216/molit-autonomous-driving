@@ -61,6 +61,14 @@ def choose_local_detour(points, cfg, active_side=None):
                   (np.abs(pts[:,1])<=c)]
     if len(immediate)>=int(cfg.get("obstacle_point_threshold",5)):
         return dict(fail,reason="IMMEDIATE_OBSTACLE")
+    # Trigger only for a real in-lane obstacle. Tunnel side walls alone
+    # must NOT cause a maneuver on an otherwise clear lane.
+    obstacle = pts[(pts[:,0]>=float(cfg.get("obstacle_min_forward_m",3.0)))&
+                   (pts[:,0]<=float(cfg.get("obstacle_max_forward_m",12.0)))&
+                   (np.abs(pts[:,1])<=c)]
+    obstacle_present = len(obstacle)>=int(cfg.get("obstacle_point_threshold",5))
+    if not obstacle_present and active_side not in (1,-1):
+        return {"status":"CLEAR","side":None,"path":[],"reason":"EGO_LANE_CLEAR"}
     candidates=[]
     for side in (1,-1):
         p=_path(side,cfg)
