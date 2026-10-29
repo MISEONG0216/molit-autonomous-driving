@@ -265,6 +265,23 @@ def main():
                 plan, latch_state = latch.apply(
                     raw_plan, ego_x, ego_y, obstacles=planner_obstacles
                 )
+                # Preserve dynamic obstacle STOP in the GPS shadow using
+                # the existing LiDAR tracker's dynamic classification.
+                # No unverified passing maneuver around moving traffic.
+                if gps_shadow:
+                    for track in tracked:
+                        if (bool(getattr(track, "is_dynamic", False))
+                                and 0.0 < float(track.x) < float(
+                                    wall_cfg.get("dynamic_stop_ahead_m", 12.0))
+                                and abs(float(track.y)) < float(
+                                    wall_cfg.get("dynamic_stop_half_width_m", 1.8))):
+                            plan = PlanResult(
+                                "STOP_REQUIRED", np.empty((0,3)),
+                                int(getattr(track, "track_id", -1)),
+                                None, 0.0, "SHADOW_DYNAMIC_TRACK_STOP"
+                            )
+                            latch_state = "SHADOW_DYNAMIC_TRACK_STOP"
+                            break
                 if gps_shadow and plan.status == "AVOIDING":
                     # Re-check an ALREADY LATCHED detour with every new scan.
                     shadow_verified, wall_reason = check_wall_clearance(
