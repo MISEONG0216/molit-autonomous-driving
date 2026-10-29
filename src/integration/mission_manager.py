@@ -34,6 +34,11 @@ class MissionManager:
         self.merge_stop_latched = False
         self.merge_accept_count = 0
         self.merge_last_accept_update = 0.0
+        # Roundabout can be considered finished only AFTER an observed
+        # stop, three distinct fresh safe packets, and forward WP progress.
+        self.roundabout_safe_released_wp = None
+        self.roundabout_done = False
+        self.roundabout_had_stop = False
 
     def set_global_path(self, path_points):
         """Precompute actual along-path metres instead of waypoint offsets."""
@@ -373,12 +378,29 @@ class MissionManager:
             merge_zone = bool(merge_all) or self._in_any_zone(
                 int(nearest_index), zones
             )
+            is_roundabout = self._in_any_zone(
+                int(nearest_index), self.merge_cfg.get("roundabout_zones", [])
+            )
+            if not is_roundabout:
+                self.roundabout_safe_released_wp = None
+                self.roundabout_done = False
+                self.roundabout_had_stop = False
             if not merge_zone:
                 # Clear a previous zone's stop request on exit.
                 self.merge_stop_latched = False
                 self.merge_accept_count = 0
                 self.merge_last_accept_update = 0.0
             else:
+                # A completed roundabout no longer consults side camera.
+                # Other mission constraints still apply normally.
+                if (is_roundabout and self.roundabout_safe_released_wp is not None
+                        and int(nearest_index) >= max(
+                            int(self.merge_cfg.get("roundabout_completion_min_wp", 1800)),
+                            self.roundabout_safe_released_wp + int(
+                                self.merge_cfg.get("roundabout_progress_wp", 10)
+                            ),
+                        ) and not self.merge_stop_latched):
+                    self.roundabout_done = True
                 # Roundabout keeps the existing conservative curve/zone speed.
                 # Highway merge: yellow (risk below STOP threshold) no longer
                 # imposes an unconditional 20km/h cap. V7, traffic, static,
@@ -402,7 +424,9 @@ class MissionManager:
                         or merge_risk >= threshold
                     )
                 )
-                if dangerous:
+                if dangerous and not self.roundabout_done:
+                    if is_roundabout:
+                        self.roundabout_had_stop = True
                     self.merge_stop_latched = True
                     self.merge_accept_count = 0
                     self.merge_last_accept_update = 0.0
@@ -421,19 +445,25 @@ class MissionManager:
                             self.merge_cfg.get("accept_confirm_frames", 3)
                         ):
                             self.merge_stop_latched = False
+                            if is_roundabout and self.roundabout_had_stop:
+                                self.roundabout_safe_released_wp = int(nearest_index)
                             self.merge_accept_count = 0
                             self.merge_last_accept_update = 0.0
                     elif not accepted:
                         self.merge_accept_count = 0
                         self.merge_last_accept_update = 0.0
 
-                if self.merge_stop_latched:
+                if self.roundabout_done:
+                    merge_state = "ROUNDABOUT_DONE"
+                elif self.merge_stop_latched:
                     merge_stop = True
                     target_speed = 0.0
                     reasons.append("merge_risk_stop")
                     merge_state = "MERGE_STOP_HOLD"
                 elif not merge_fresh:
                     # No perception: do not treat absent camera data as safe.
+                    if is_roundabout:
+                        self.roundabout_had_stop = True
                     merge_stop = True
                     target_speed = 0.0
                     reasons.append("merge_vision_wait")
@@ -462,5 +492,6 @@ class MissionManager:
             "merge_fresh": merge_fresh,
             "merge_zone": merge_zone,
             "merge_stop": merge_stop,
+            "roundabout_done": self.roundabout_done,
             "merge_accept_count": self.merge_accept_count,
         }
