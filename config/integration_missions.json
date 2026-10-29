@@ -60,7 +60,12 @@
     "side_camera_ports": [
       9293
     ],
-    "rear_left_camera_port": 1118
+    "rear_left_camera_port": 1118,
+    "distance_sensitivity_enabled": true,
+    "far_area_ratio": 0.006,
+    "near_full_risk_area_ratio": 0.03,
+    "far_risk_weight": 0.45,
+    "perception_tuning_note": "Roundabout WP1770-1820: use LEFT9293 only and ignore rear-left1118. Highway merge WP2480-2560 and WP3050-3190: use LEFT9293 + LEFT_REAR1118. Original V23 risk threshold 0.60 and near-vehicle risk function unchanged. Very small far-looking bboxes attenuated by area ratio; not a calibrated range or lane-ID model."
   },
   "static": {
     "result_timeout_sec": 3.5,
