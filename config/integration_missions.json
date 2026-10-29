@@ -165,5 +165,21 @@
     "steer_gain_rad": 0.2,
     "max_steer_rad": 0.22,
     "notes": "Based on provided morai_lanenet_viz.py HSV/Canny/BEV/EMA, not actual TensorFlow LaneNet. On GPS missing/unchanged for >1.0s while moving, camera lane steer is PRIMARY. Bounded IMU+speed dead reckoning is only for original LiDAR planner alignment and approximate WP gates, never for primary steering. Never continue blindly: no initial fix, stale lane, invalid lane, IMU/status failure, pose gap>0.8s, >12s or >35m blackout or >7m path offset => full stop. Full-vehicle dynamic traffic detection is NOT covered; existing pedestrian YOLO/MiDaS only."
+  },
+  "gps_shadow_wall_guard": {
+    "check_ahead_m": 18,
+    "minimum_path_ahead_m": 6,
+    "vehicle_half_width_m": 0.9,
+    "safety_margin_m": 0.45,
+    "minimum_obstacle_points": 40,
+    "side_observation_min_m": 1.3,
+    "side_observation_max_m": 8,
+    "min_side_observation_points": 8,
+    "z_min_m": -1.45,
+    "z_max_m": 1.25,
+    "max_path_pose_error_m": 1.8,
+    "allow_sweep_hit_points": 0,
+    "avoidance_speed_kmh": 6,
+    "note": "Only GPS shadow. LiDAR current points (not width-filtered obstacle clusters) must show both lateral sectors and no obstacles/tunnel wall inside path sweep; original planner candidates both sides evaluated. Assumed vehicle 1.8m, extra 0.45m clearance; NOT calibrated, fail-stop on no verified path."
   }
 }
