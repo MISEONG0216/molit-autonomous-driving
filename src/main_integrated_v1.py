@@ -458,7 +458,9 @@ def main():
                 and imu_data.ori_y == 0.0
                 and imu_data.ori_z == 0.0
             ):
-                print("[WAIT] IMU")
+                if args.drive and ctrl_sender is not None:
+                    base.send_stop(ctrl_sender)
+                print("[WAIT] IMU => FULL STOP")
                 time.sleep(0.1)
                 continue
 
