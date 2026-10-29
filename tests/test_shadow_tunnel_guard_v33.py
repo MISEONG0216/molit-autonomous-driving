@@ -26,7 +26,7 @@ class TunnelSafetyGuardTest(unittest.TestCase):
         main = (ROOT / "src/main_integrated_v1.py").read_text(encoding="utf-8")
         self.assertIn('elif static_active:', main)
         self.assertIn('mission["reasons"].append("static_stop_or_stale")', main)
-        self.assertIn('or (args.static_control and static_stop) or pedestrian_stop or shadow_stop:', main)
+        self.assertIn('or (args.static_control and static_stop) or pedestrian_stop or shadow_stop):', main)
         self.assertEqual(main.count("ctrl_sender.send(cmd)"), 1)
 
 
