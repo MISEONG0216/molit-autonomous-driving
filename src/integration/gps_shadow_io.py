@@ -120,10 +120,17 @@ class GpsShadowPose:
             self.last_recovery_sample = None
 
         duration = now-self.shadow_started_at
+        # Long tunnels cannot be cleared using a hard 12-second timer.
+        # In sensor-guided mode, main requires fresh lane + LiDAR every cycle
+        # and does not use this drifting pose for steering or obstacle planning.
+        extended = self.cfg.get("allow_sensor_guided_extended", False) is True
         expired = (
             gap_bad
-            or duration > float(self.cfg.get("max_shadow_sec", 12.0))
-            or self.shadow_distance_m > float(self.cfg.get("max_shadow_distance_m", 35.0))
+            or (not extended and (
+                duration > float(self.cfg.get("max_shadow_sec", 12.0))
+                or self.shadow_distance_m > float(
+                    self.cfg.get("max_shadow_distance_m", 35.0))
+            ))
         )
         self.last_mode = "STOP" if expired else "SHADOW"
         return self.last_mode, self.pose, duration
