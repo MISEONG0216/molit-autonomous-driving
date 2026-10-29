@@ -149,6 +149,7 @@ def main():
 
     pose = None
     pose_time = 0.0
+    gps_shadow = False
     previous_pose = None
     previous_scan_timestamp = None
     last_scan_timestamp = None
@@ -182,6 +183,13 @@ def main():
                 if decoded is not None:
                     pose = decoded
                     pose_time = time.monotonic()
+                    # Shadow pose is bounded dead-reckoning from main.
+                    # Keep original obstacle detection/tracking/local planner.
+                    try:
+                        gps_shadow = (json.loads(raw.decode("ascii"))
+                                      .get("gps_shadow") is True)
+                    except (ValueError, UnicodeError, AttributeError):
+                        gps_shadow = False
 
             if pose is None or time.monotonic() - pose_time > POSE_TIMEOUT_SEC:
                 time.sleep(0.02)
@@ -206,7 +214,11 @@ def main():
 
             ego_x, ego_y, ego_yaw = pose
             waypoint_index = nearest_index(path, ego_x, ego_y)
-            inside_zone = in_static_zone(waypoint_index, static_zones)
+            inside_zone = (in_static_zone(waypoint_index, static_zones)
+                           or gps_shadow)
+            # During a GPS blackout, any road obstacle may need the original
+            # static planner. The main still imposes a strict shadow speed cap
+            # and a short dead-reckoning expiry fail-stop.
             # Keep a route accepted inside the zone until geometric release.
             planner_enabled = bool(inside_zone or latch.active)
             if not planner_enabled:
