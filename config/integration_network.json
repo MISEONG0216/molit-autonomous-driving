@@ -54,5 +54,13 @@
   "highway_follow_result": {
     "bind_ip": "127.0.0.1",
     "port": 9308
+  },
+  "gps_shadow_camera_relay": {
+    "bind_ip": "127.0.0.1",
+    "port": 9311
+  },
+  "gps_shadow_lane_result": {
+    "bind_ip": "127.0.0.1",
+    "port": 9312
   }
 }
