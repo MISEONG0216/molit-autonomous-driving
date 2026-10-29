@@ -60,7 +60,7 @@
     "side_camera_ports": [
       9293
     ],
-    "rear_left_camera_port": null
+    "rear_left_camera_port": 1118
   },
   "static": {
     "result_timeout_sec": 3.5,
