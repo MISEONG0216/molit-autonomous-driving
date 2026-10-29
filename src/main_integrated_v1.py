@@ -729,21 +729,30 @@ def main():
                     if static_fresh and not static_plan["zone_active"]:
                         static_state = "ZONE_MISMATCH"
                 elif static_state == "AVOIDING":
-                    target_speed_kmh = min(target_speed_kmh, static_speed_limit)
-                    local_pp = local_path_pure_pursuit(
-                        static_plan["path"], current_x, current_y, yaw,
-                        base.VEHICLE_LENGTH,
-                    )
-                    if local_pp is None:
+                    if shadow_active:
+                        # The original global-XY LiDAR detour assumes a
+                        # configured 7m-wide drivable corridor. Under GPS
+                        # blackout the bounded dead-reckoned pose does NOT
+                        # establish tunnel-wall clearance. Refuse the unverified
+                        # lateral detour instead of steering into a wall.
                         static_stop = True
-                        static_state = "LOCAL_PATH_LOST"
+                        static_state = "SHADOW_DETOUR_UNVERIFIED"
                     else:
-                        static_active = True
-                        steering = float(local_pp["steering"])
-                        target_speed_kmh = min(
-                            target_speed_kmh,
-                            float(static_plan["recommended_speed_kmh"]),
+                        target_speed_kmh = min(target_speed_kmh, static_speed_limit)
+                        local_pp = local_path_pure_pursuit(
+                            static_plan["path"], current_x, current_y, yaw,
+                            base.VEHICLE_LENGTH,
                         )
+                        if local_pp is None:
+                            static_stop = True
+                            static_state = "LOCAL_PATH_LOST"
+                        else:
+                            static_active = True
+                            steering = float(local_pp["steering"])
+                            target_speed_kmh = min(
+                                target_speed_kmh,
+                                float(static_plan["recommended_speed_kmh"]),
+                            )
                 if static_stop:
                     target_speed_kmh = 0.0
                     mission["reasons"].append("static_stop_or_stale")
