@@ -103,7 +103,7 @@ class WallCheck(unittest.TestCase):
         worker=(ROOT/"src/lidar/static_avoidance_module.py").read_text()
         ast.parse(main);ast.parse(worker)
         self.assertIn('not static_plan.get("shadow_wall_verified", False)',main)
-        self.assertIn('pick_shadow_detour(',worker)
+        self.assertIn('choose_local_detour(',worker)
         self.assertIn('check_wall_clearance(',worker)
         self.assertIn('or (args.static_control and static_stop)',main)
         self.assertNotIn("EgoCtrlCmd(",worker)
