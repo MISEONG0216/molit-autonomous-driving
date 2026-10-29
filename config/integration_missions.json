@@ -180,6 +180,11 @@
     "max_path_pose_error_m": 1.8,
     "allow_sweep_hit_points": 0,
     "avoidance_speed_kmh": 6,
-    "note": "Only GPS shadow. LiDAR current points (not width-filtered obstacle clusters) must show both lateral sectors and no obstacles/tunnel wall inside path sweep; original planner candidates both sides evaluated. Assumed vehicle 1.8m, extra 0.45m clearance; NOT calibrated, fail-stop on no verified path."
+    "note": "Only GPS shadow. LiDAR current points (not width-filtered obstacle clusters) must show both lateral sectors and no obstacles/tunnel wall inside path sweep; original planner candidates both sides evaluated. Assumed vehicle 1.8m, extra 0.45m clearance; NOT calibrated, fail-stop on no verified path. Dynamic tracks classified by original LiDAR tracker STOP within 12m ahead and 1.8m half-width. Raw forward wall/obstacle 1.5-6m emergency STOP when no verified detour.",
+    "dynamic_stop_ahead_m": 12,
+    "dynamic_stop_half_width_m": 1.8,
+    "emergency_min_forward_m": 1.5,
+    "emergency_stop_ahead_m": 6,
+    "emergency_min_points": 5
   }
 }
