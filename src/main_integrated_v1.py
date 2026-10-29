@@ -103,6 +103,15 @@ from integration.second_corner_right_offset import (
     END_WP as SECOND_RIGHT_END_WP,
     MAX_RIGHT_OFFSET_M as MAX_SECOND_RIGHT_OFFSET_M,
 )
+from integration.second_corner_apex_extra_right import (
+    make_apex_extra_right_path,
+    extra_at_wp as second_corner_apex_extra_at_wp,
+    RAMP_IN_START_WP as SECOND_APEX_BEGIN_WP,
+    FULL_START_WP as SECOND_APEX_FULL_START_WP,
+    FULL_END_WP as SECOND_APEX_FULL_END_WP,
+    RAMP_OUT_END_WP as SECOND_APEX_END_WP,
+    MAX_APEX_EXTRA_M,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -164,6 +173,7 @@ def open_log():
         "first_corner_left_offset_m",
         "first_corner_exit_right_offset_m",
         "second_corner_right_offset_m",
+        "second_corner_apex_extra_right_m",
     ])
     return path, f, w
 
@@ -236,6 +246,11 @@ def main():
         help="delayed RIGHT tracking path starting at WP231, reaching full "
              "offset at WP250 and fading by WP300; 0=OFF, try 0.20m",
     )
+    parser.add_argument(
+        "--second-corner-apex-extra-right-m", type=float, default=0.0,
+        help="additional RIGHT target path just at second corner apex "
+             "WP248-292 (0=OFF, try 0.10m); requires base offset 0.40m",
+    )
     args = parser.parse_args()
 
     if args.merge_control and not args.merge:
@@ -291,6 +306,20 @@ def main():
             "set --first-corner-exit-right-offset-m 0"
         )
 
+    if not math.isfinite(args.second_corner_apex_extra_right_m) or not (
+        0.0 <= args.second_corner_apex_extra_right_m <= MAX_APEX_EXTRA_M
+    ):
+        parser.error(
+            f"--second-corner-apex-extra-right-m must be 0..{MAX_APEX_EXTRA_M:.2f}"
+        )
+    if (
+        args.second_corner_apex_extra_right_m > 0.0
+        and abs(args.second_corner_right_offset_m - 0.40) > 1e-6
+    ):
+        parser.error(
+            "For this isolated apex test, set --second-corner-right-offset-m 0.40"
+        )
+
     network = load_json(NETWORK_FILE)
     missions = load_json(MISSION_FILE)
     stop_indices = load_stop_indices(STOP_INDEX_FILE)
@@ -317,6 +346,11 @@ def main():
     # WP231, after the successful first corner; do not overlap old exit bias.
     tracking_path = make_second_corner_right_path(
         tracking_path, args.second_corner_right_offset_m,
+    )
+    # Small additional RIGHT bias only near second turn apex WP260-276.
+    # Original route, index lookup, V7 speed and mission logic are unchanged.
+    tracking_path = make_apex_extra_right_path(
+        tracking_path, args.second_corner_apex_extra_right_m,
     )
     tracking_path = make_roundabout_exit_path(
         tracking_path, args.roundabout_offset_m,
@@ -461,6 +495,13 @@ def main():
         f"hold WP{SECOND_RIGHT_FULL_BEGIN_WP}-{SECOND_RIGHT_FULL_END_WP}, "
         f"release by WP{SECOND_RIGHT_END_WP}; 0=OFF"
     )
+    print(
+        f"[SECOND CORNER APEX EXTRA RIGHT] "
+        f"max={args.second_corner_apex_extra_right_m:.2f}m; "
+        f"ramp WP{SECOND_APEX_BEGIN_WP}-{SECOND_APEX_FULL_START_WP}, "
+        f"hold WP{SECOND_APEX_FULL_START_WP}-{SECOND_APEX_FULL_END_WP}, "
+        f"release by WP{SECOND_APEX_END_WP}; 0=OFF"
+    )
     print("[CTRL] single EgoCtrlCmd sender / ctrl_mode=2 / cmd_type=1")
     print(f"[MODE] {'DRIVE' if args.drive else 'DRY-RUN'}")
     print(f"[TRAFFIC] {'ON' if args.traffic else 'OFF'} / stops={stop_indices}")
@@ -590,6 +631,9 @@ def main():
             )
             current_second_corner_right_offset_m = second_corner_right_at_wp(
                 nearest_index, args.second_corner_right_offset_m,
+            )
+            current_second_apex_extra_right_m = second_corner_apex_extra_at_wp(
+                nearest_index, args.second_corner_apex_extra_right_m,
             )
 
             result = base.calculate_pure_pursuit(
@@ -873,6 +917,7 @@ def main():
                 f"{current_first_corner_left_offset_m:.3f}",
                 f"{current_first_corner_exit_right_offset_m:.3f}",
                 f"{current_second_corner_right_offset_m:.3f}",
+                f"{current_second_apex_extra_right_m:.3f}",
             ])
 
             print("\033[2J\033[H", end="")
@@ -909,6 +954,11 @@ def main():
             if args.second_corner_right_offset_m > 0.0:
                 print(
                     f"SECOND PATH : RIGHT {current_second_corner_right_offset_m:.3f} m "
+                    f"/ TRACK DIST {tracking_distance:.3f} m"
+                )
+            if args.second_corner_apex_extra_right_m > 0.0:
+                print(
+                    f"APEX EXTRA  : RIGHT {current_second_apex_extra_right_m:.3f} m "
                     f"/ TRACK DIST {tracking_distance:.3f} m"
                 )
             if args.roundabout_early_right_deg > 0.0:
