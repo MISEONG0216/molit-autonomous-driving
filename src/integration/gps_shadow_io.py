@@ -66,6 +66,13 @@ class GpsShadowPose:
         if changed:
             self.last_change_at = now
             self.last_sample = raw
+        elif (raw is not None and not self.shadow and
+              abs(speed) < float(self.cfg.get("moving_threshold_kmh", 2.0))):
+            # An unchanged fix while stationary is normal, not a GPS outage.
+            # Start the stale-moving timer from the last stationary observation
+            # rather than carrying red-light waiting time into the first move.
+            # A missing fix still triggers the original fail-safe immediately.
+            self.last_change_at = now
 
         if self.pose is None:
             if raw is None:
