@@ -47,6 +47,8 @@ from integration.dynamic_pedestrian_io import (
     load_dynamic_zones, in_dynamic_zone,
     parse_pedestrian_message, PedestrianStopLatch,
 )
+from integration.gps_shadow_io import GpsShadowPose
+from integration.gps_shadow_lane import parse_lane_result
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -103,6 +105,8 @@ def open_log():
         "pedestrian_frame", "pedestrian_clear_count",
         "follow_zone", "follow_state", "follow_risk", "follow_grade",
         "follow_speed_cap_kmh", "follow_age_sec", "follow_vehicles",
+        "gps_mode", "gps_shadow_sec", "lane_valid", "lane_confidence",
+        "lane_steering_rad", "shadow_stop",
     ])
     return path, f, w
 
@@ -110,6 +114,8 @@ def open_log():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--drive", action="store_true")
+    parser.add_argument("--gps-shadow", action="store_true",
+                        help="on GPS loss use lane-center steering + existing LiDAR/person safety")
     parser.add_argument(
         "--traffic",
         action="store_true",
@@ -146,6 +152,10 @@ def main():
                         help="normal <=57; explicitly request up to 120 on verified highway WPs")
     args = parser.parse_args()
 
+    if args.gps_shadow and not args.traffic:
+        parser.error("--gps-shadow requires --traffic for shared 9291 camera relay")
+    if args.gps_shadow and not (args.static_control and args.pedestrian_control):
+        parser.error("--gps-shadow requires --static --static-control --pedestrian --pedestrian-control")
     if args.merge_control and not args.merge:
         parser.error("--merge-control requires --merge")
     if args.static_control and not args.static:
@@ -165,6 +175,7 @@ def main():
 
     network = load_json(NETWORK_FILE)
     missions = load_json(MISSION_FILE)
+    shadow_cfg = missions.get("gps_shadow", {})
     stop_indices = load_stop_indices(STOP_INDEX_FILE)
 
     # Importing V7 already applies the validated V7 monkey-patches.
@@ -286,6 +297,18 @@ def main():
         pedestrian_gate_target = ("127.0.0.1", int(gate_cfg["port"]))
         pedestrian_gate_tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
+    lane_rx = None
+    lane_result = parse_lane_result(None)
+    lane_updated_at = 0.0
+    gps_shadow_pose = GpsShadowPose(shadow_cfg)
+    if args.gps_shadow:
+        lane_net = network["gps_shadow_lane_result"]
+        if lane_net["bind_ip"] != "127.0.0.1":
+            raise RuntimeError("GPS shadow lane result must be localhost")
+        lane_rx = LatestUdpTextReceiver(
+            "127.0.0.1", int(lane_net["port"]), max_size=2048,
+        )
+
     mission_manager = MissionManager(
         missions.get("traffic", {}),
         missions.get("merge", {}),
@@ -328,6 +351,10 @@ def main():
     print("[BASE] validated V7 import chain")
     print("[CTRL] single EgoCtrlCmd sender / ctrl_mode=2 / cmd_type=1")
     print(f"[MODE] {'DRIVE' if args.drive else 'DRY-RUN'}")
+    if args.gps_shadow:
+        print("[GPS SHADOW] ON: lane steering replaces global PP on stale/missing GPS")
+        print("[GPS SHADOW] existing pedestrian STOP and LiDAR local path retain priority")
+        print("[GPS SHADOW] never launch a second UDP9291 subscriber")
     print(f"[TRAFFIC] {'ON' if args.traffic else 'OFF'} / stops={stop_indices}")
     if args.traffic:
         print("[TRAFFIC] 60m approach: <=30km/h (regardless of colour)")
@@ -400,6 +427,12 @@ def main():
                 if raw is not None and is_new:
                     static_plan = parse_static_message(raw)
                     static_updated_at = updated_at
+
+            if lane_rx is not None:
+                lane_raw, lane_ts, lane_new = lane_rx.poll()
+                if lane_raw is not None and lane_new:
+                    lane_result = parse_lane_result(lane_raw)
+                    lane_updated_at = lane_ts
 
             pedestrian_new_result = False
             if pedestrian_rx is not None:
@@ -914,6 +947,8 @@ def main():
             follow_rx.close()
         if pedestrian_gate_tx is not None:
             pedestrian_gate_tx.close()
+        if lane_rx is not None:
+            lane_rx.close()
         log_file.flush()
         log_file.close()
         print(f"[LOG SAVED] {log_path}")
