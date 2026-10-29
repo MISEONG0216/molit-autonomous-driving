@@ -145,7 +145,7 @@ def main():
     parser.add_argument("--beomsu-roundabout-right-m", type=float, default=0.0,
                         help="Opt-in smooth RIGHT offset WP1859-1902; initial low-speed test 0.20m")
     parser.add_argument("--beomsu-roundabout-kmh", type=float, default=0.0,
-                        help="Opt-in distance-preview roundabout speed hold WP1835-1892; test 12km/h")
+                        help="Opt-in distance-preview slow roundabout speed hold WP1770-1902; test 8km/h")
     args = parser.parse_args()
 
     if args.merge_control and not args.merge:
@@ -293,7 +293,7 @@ def main():
         print(f"[STATIC RESULT] {network['static_result']}")
     print(f"[BEOMSU LANE] zones={lane_zones} / default OFF / cap={TEST_SPEED_LIMIT_KMH:.1f}km/h in offset zones")
     print(f"[ROUNDABOUT BEOMSU] right_offset={args.beomsu_roundabout_right_m:+.2f}m "
-          f"WP1859-1902 / speed_hold={args.beomsu_roundabout_kmh:.1f}km/h "
+          f"WP1859-1902 / full-circle WP1770-1902 speed_hold={args.beomsu_roundabout_kmh:.1f}km/h "
           f"WP1835-1892 / 0=OFF")
     print(f"[LOG] {log_path}")
 
