@@ -146,7 +146,6 @@ def main():
             "recommended_kmh", "waypoint_index", "in_static_zone",
             "latch_active", "static_zone_active",
         ])
-    
 
     pose = None
     pose_time = 0.0
@@ -283,10 +282,11 @@ def main():
             if csv_enabled:
                 writer.writerow([
                     scan_count, f"{ego_x:.3f}", f"{ego_y:.3f}",
-                raw_plan.status, status, latch_state,
-                len(obstacles), len(tracked), plan.obstacle_id, plan.avoidance_side,
-                len(selected_path), plan.recommended_speed_kph,
-                waypoint_index, int(inside_zone), int(latch.active),
+                    raw_plan.status, status, latch_state,
+                    len(obstacles), len(tracked),
+                    plan.obstacle_id, plan.avoidance_side,
+                    len(selected_path), plan.recommended_speed_kph,
+                    waypoint_index, int(inside_zone), int(latch.active),
                     int(zone_active),
                 ])
                 logfile.flush()
