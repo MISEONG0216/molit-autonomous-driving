@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Opt-in distance-based speed cap for V22 roundabout exit stability.
+"""Opt-in distance-based slow full-roundabout speed cap for V20 Beomsu test.
 
 Purpose
 -------
@@ -9,9 +9,9 @@ Preview-brake towards the roundabout speed BEFORE the sharp exit turn,
 hold it through the exit, and gradually allow normal acceleration after.
 
 Plan, indexed against the UNMODIFIED official global path:
-- WP < 1835: anticipatory cap from sqrt(v_hold**2 + 2*a_brake*distance)
-- WP 1835..1892: speed cap == requested hold speed (12 km/h first test)
-- WP > 1892: release cap from sqrt(v_hold**2 + 2*a_accel*distance)
+- WP < 1770: anticipatory cap from sqrt(v_hold**2 + 2*a_brake*distance)
+- WP 1770..1902: speed cap == requested hold speed (8 km/h first test)
+- WP > 1902: release cap from sqrt(v_hold**2 + 2*a_accel*distance)
 
 These speeds are requested TARGET LIMITS; actual speed must be checked from
 Competition Vehicle Status. The 0.9 and 0.8 m/s2 numbers are trial
@@ -24,8 +24,8 @@ indices, LiDAR worker and signal recognition are not modified by this module.
 import math
 
 
-HOLD_START_WP = 1835
-HOLD_END_WP = 1892
+HOLD_START_WP = 1770
+HOLD_END_WP = 1902
 PREVIEW_DECEL_MPS2 = 0.9
 RELEASE_ACCEL_MPS2 = 0.8
 
