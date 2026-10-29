@@ -151,17 +151,15 @@ def main():
             for side, cam in cameras.items():
                 if cam not in readable:
                     continue
-                if side not in active_sides and side == "left_rear":
-                    # In the roundabout rear-left is completely excluded from
-                    # inference and risk. Drain traffic to prevent stale frames
-                    # being processed when the highway mode starts later.
+                if side not in active_sides:
+                    # Disabled cameras are not decoded or inferred. Drain UDP
+                    # to avoid stale frames when a later zone enables them.
                     for _ in range(192):
                         try:
                             cam.recvfrom(65535)
                         except BlockingIOError:
                             break
-                    if mode in ("roundabout", "roundabout_prearm", "post_merge", "roundabout_done"):
-                        frames.pop(side, None)
+                    frames.pop(side, None)
                     continue
                 jpeg = take_latest(cam, assemblers[side])
                 if jpeg is None:
