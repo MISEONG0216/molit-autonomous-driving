@@ -53,7 +53,7 @@ STAMP="$(date +%Y%m%d_%H%M%S)"
 if [[ "$DETAILED_LOGS" == "1" ]]; then
   export STATIC_CSV_LOG=1
   echo "[LOG] detailed mode: main CSV, LiDAR CSV and 4 worker .log files"
-  python3 -u src/traffic_light_detector.py --relay-pedestrian >"logs/v25_traffic_${STAMP}.log" 2>&1 &
+  python3 -u src/traffic_light_detector.py --relay-pedestrian --relay-lane >"logs/v25_traffic_${STAMP}.log" 2>&1 &
   PIDS+=("$!")
   python3 -u src/dynamic_pedestrian_worker.py --show --follow >"logs/v25_pedestrian_${STAMP}.log" 2>&1 &
   PIDS+=("$!")
@@ -61,12 +61,14 @@ if [[ "$DETAILED_LOGS" == "1" ]]; then
   PIDS+=("$!")
   python3 -u src/merge_side_camera_worker.py --show >"logs/v25_merge_${STAMP}.log" 2>&1 &
   PIDS+=("$!")
+  python3 -u src/gps_shadow_lane_worker.py --show >"logs/v32_lane_${STAMP}.log" 2>&1 &
+  PIDS+=("$!")
 else
   export STATIC_CSV_LOG=0
   SESSION_LOG="logs/session_${STAMP}.log"
   : > "$SESSION_LOG"
   echo "[LOG] compact mode: integrated CSV + $SESSION_LOG (all worker outputs)"
-  python3 -u src/traffic_light_detector.py --relay-pedestrian >>"$SESSION_LOG" 2>&1 &
+  python3 -u src/traffic_light_detector.py --relay-pedestrian --relay-lane >>"$SESSION_LOG" 2>&1 &
   PIDS+=("$!")
   python3 -u src/dynamic_pedestrian_worker.py --show --follow >>"$SESSION_LOG" 2>&1 &
   PIDS+=("$!")
@@ -74,13 +76,15 @@ else
   PIDS+=("$!")
   python3 -u src/merge_side_camera_worker.py --show >>"$SESSION_LOG" 2>&1 &
   PIDS+=("$!")
+  python3 -u src/gps_shadow_lane_worker.py >>"$SESSION_LOG" 2>&1 &
+  PIDS+=("$!")
 fi
 sleep 2
-echo "[V27] main starting: traffic, static, pedestrian, merge, highway-follow controls ON"
+echo "[V32] main starting: GPS shadow lane, traffic, static LiDAR, pedestrian, merge, highway follow ON"
 echo "[V25] additional args: ${MAIN_ARGS[*]}"
 echo "[V25] if camera previews do not open, check session log or detailed logs."
 python3 src/main_integrated_v1.py \
   --traffic --static --static-control \
   --pedestrian --pedestrian-control \
   --merge --merge-control \
-  --follow --follow-control --max-speed 57 "${MAIN_ARGS[@]}"
+  --follow --follow-control --gps-shadow --max-speed 57 "${MAIN_ARGS[@]}"
