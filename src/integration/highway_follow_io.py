@@ -7,7 +7,45 @@ import json
 import math
 
 
-LANE_ROI_RATIO = ((0.48, 0.48), (0.52, 0.48), (0.66, 0.78), (0.34, 0.78))
+# Full-frame trapezoid: narrow at the horizon, wider near the ego bumper.
+# Still only an image-space lane approximation, NOT calibrated lane geometry.
+LANE_ROI_RATIO = ((0.44, 0.38), (0.56, 0.38), (0.88, 0.97), (0.12, 0.97))
+
+
+def vehicle_overlaps_lane(x1, y1, x2, y2, width, height,
+                          min_overlap=0.30):
+    """Accept a close/partially clipped vehicle overlapping the ego-lane ROI.
+
+    Use bottom-of-box horizontal overlap, not only the bottom-center point.
+    Return False for boxes entirely in an adjacent lane. Geometry must be
+    validated against the actual camera extrinsics and road curvature.
+    """
+    if width <= 0 or height <= 0 or x2 <= x1 or y2 <= y1:
+        return False
+    # Do not include sky objects; clamp y to the near-vehicle trapezoid.
+    bottom = min(0.97, max(0.38, y2 / float(height)))
+    t = (bottom - 0.38) / (0.97 - 0.38)
+    left = (0.44 + (0.12 - 0.44) * t) * width
+    right = (0.56 + (0.88 - 0.56) * t) * width
+    overlap = max(0.0, min(x2, right) - max(x1, left))
+    ratio = overlap / max(x2 - x1, 1e-6)
+    center = 0.5 * (x1 + x2)
+    return ratio >= min_overlap and (left <= center <= right or ratio >= 0.50)
+
+
+def retained_follow_risk(raw_risk, last_risk, seconds_since_seen,
+                         hold_sec=0.8):
+    """Temporarily retain last risk when a nearby car is briefly lost.
+
+    Bounded retention; cannot substitute for range sensing or tracking.
+    """
+    if not math.isfinite(seconds_since_seen) or seconds_since_seen < 0:
+        return max(0.0, min(1.0, raw_risk))
+    if seconds_since_seen <= hold_sec:
+        return max(raw_risk, last_risk)
+    if seconds_since_seen <= 2 * hold_sec:
+        return max(raw_risk, last_risk * 0.60)
+    return raw_risk
 RISK_LEVELS = (
     (0.80, 4, 20.0),
     (0.60, 3, 40.0),
