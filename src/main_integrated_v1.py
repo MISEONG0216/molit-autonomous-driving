@@ -571,9 +571,9 @@ def main():
                 nearest_x - current_x,
                 nearest_y - current_y,
             )
-            if shadow_active and nearest_distance > float(
-                    shadow_cfg.get("max_shadow_path_offset_m", 7.0)):
-                shadow_stop = True
+            # The dead-reckoned global position is NOT a shadow navigation
+            # reference: no global-path-offset stop in ego-LiDAR mode.
+            # Camera lane + LiDAR freshness and local clearance replace it.
 
             # GPS mode uses the unchanged V7 Pure Pursuit.
             # Shadow mode uses camera lane-center as PRIMARY guidance.
@@ -605,9 +605,9 @@ def main():
                 nearest_index=nearest_index,
                 base_target_speed_kmh=base_target,
                 base_steering=base_steering,
-                traffic_enabled=args.traffic,
-                merge_enabled=args.merge,
-                merge_control_enabled=args.merge_control,
+                traffic_enabled=bool(args.traffic and not shadow_active),
+                merge_enabled=bool(args.merge and not shadow_active),
+                merge_control_enabled=bool(args.merge_control and not shadow_active),
                 # Accept only recent prewarmed observations from this approach.
                 merge_result=(merge if merge_updated_at >= merge_zone_entered_at else parse_merge_message(None)),
                 merge_updated_at=(merge_updated_at if merge_updated_at >= merge_zone_entered_at else 0.0),
@@ -621,8 +621,8 @@ def main():
             # GRADED highway following, no arbitrary full brake on an image
             # score. Other mission STOPs retain precedence. Stale data means
             # a low-speed cap, never permission to drive 120.
-            follow_in_zone = in_follow_zone(
-                nearest_index, follow_cfg, len(global_path))
+            follow_in_zone = (not shadow_active and in_follow_zone(
+                nearest_index, follow_cfg, len(global_path)))
             if follow_in_zone and not follow_was_in_zone:
                 follow_zone_entered_at = time.time() - min(
                     1.5, max(0.0, float(follow_cfg.get("prewarm_result_age_sec", 1.0)))
@@ -701,8 +701,8 @@ def main():
             static_fresh = bool(
                 static_plan["valid"] and static_age <= (
                     min(static_timeout_sec, float(
-                        missions.get("gps_shadow_wall_guard", {}).get(
-                            "max_verified_scan_age_sec", 2.4
+                        missions.get("gps_shadow_ego_planner", {}).get(
+                            "max_result_age_sec", 1.6
                         )
                     )) if shadow_active else static_timeout_sec
                 )
@@ -761,15 +761,19 @@ def main():
                 elif static_active:
                     mission["reasons"].append("static_local_avoidance")
 
-            if (shadow_active and static_active and gps_mode == "SHADOW"
-                    and nearest_distance <= float(
-                        shadow_cfg.get("max_shadow_path_offset_m", 7.0))):
+            if (shadow_active and static_active and gps_mode == "SHADOW"):
                 # Obstacle may occlude the lane. Permit ONLY a fresh valid
                 # original LiDAR local route to override lane-vision dropout;
                 # GPS/DR expiry, too much path drift, and LiDAR STOP still win.
                 shadow_stop = False
 
             if shadow_active:
+                # GPS-shadow requires independent, recent 3D LiDAR evidence
+                # even when no clustered static obstacle is detected.
+                if not static_fresh:
+                    shadow_stop = True
+                    target_speed_kmh = 0.0
+                    mission["reasons"].append("gps_shadow_lidar_stale")
                 target_speed_kmh = min(
                     target_speed_kmh,
                     float(shadow_cfg.get("shadow_speed_kmh", 12.0)),
@@ -801,9 +805,9 @@ def main():
             dt_control = max(1e-3, now - prev_control_time)
             prev_control_time = now
 
-            if (args.traffic and mission["traffic_full_brake"]) or (
-                args.merge_control and mission["merge_stop"]
-            ) or (args.static_control and static_stop) or pedestrian_stop or shadow_stop:
+            if ((args.traffic and not shadow_active and mission["traffic_full_brake"])
+                or (args.merge_control and not shadow_active and mission["merge_stop"])
+                or (args.static_control and static_stop) or pedestrian_stop or shadow_stop):
                 # Any mission STOP commands full brake from main.
                 command_limiter.reset()
                 accel_cmd, brake_cmd, signed_cmd = 0.0, 1.0, -1.0
