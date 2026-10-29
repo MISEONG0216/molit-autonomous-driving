@@ -55,7 +55,12 @@
     "zone_speed_kmh": 20,
     "risk_stop_threshold": 0.6,
     "accept_confirm_frames": 3,
-    "test_zone_note": "User-surveyed MORAI waypoint ranges: roundabout 1770-1820, merge1 2480-2560, merge2 3050-3190."
+    "test_zone_note": "User-surveyed MORAI waypoint ranges: roundabout 1770-1820, merge1 2480-2560, merge2 3050-3190.",
+    "observation_note": "ONLY left-side UDP9293 plus an independently configured rear-left-facing camera; right-side UDP9295 MUST NOT be bound, decoded, previewed, or used for merge decisions. Rear-left port is unknown in provided official 3-camera sensor-set: configure after MORAI verification. Unconfigured rear-left camera blocks merge worker launch (fail closed). Camera risk is image-space and not calibrated TTC.",
+    "side_camera_ports": [
+      9293
+    ],
+    "rear_left_camera_port": null
   },
   "static": {
     "result_timeout_sec": 3.5,
@@ -74,14 +79,14 @@
   "dynamic_pedestrian": {
     "zones_wp": [
       [
-        430,
-        580
+        720,
+        1050
       ]
     ],
     "result_timeout_sec": 3.5,
     "stop_risk_threshold": 0.5,
     "clear_confirm_frames": 3,
-    "zone_note": "PROVISIONAL from supplied map and WP trace: pedestrian zone between first STOP WP414 and second STOP WP620, independent of static mission WP590-760. Confirm exact pedestrian spawn boundaries in MORAI.",
+    "zone_note": "User-confirmed by manual MORAI waypoint survey: pedestrian/dynamic-obstacle mission WP720-1050. WP720-760 overlaps static-avoidance zone WP590-760; both safety constraints may apply in that overlap.",
     "note": "Observe forward camera YOLO person(0) + MiDaS risk from provided script; stop in zone when risk>=0.50. No direct controls from vision worker. Fail stop on missing/stale results while active. Other detected COCO vehicle classes are display-only."
   }
 }
