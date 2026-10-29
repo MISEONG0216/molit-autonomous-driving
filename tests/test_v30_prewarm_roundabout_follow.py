@@ -33,8 +33,8 @@ class V30Test(unittest.TestCase):
         )
 
     def test_camera_prearms_and_stays_live_on_entry(self):
-        self.assertEqual(merge_camera_mode(1744, self.cfg), "off")
-        self.assertEqual(merge_camera_mode(1745, self.cfg), "roundabout_prearm")
+        self.assertEqual(merge_camera_mode(1699, self.cfg), "off")
+        self.assertEqual(merge_camera_mode(1700, self.cfg), "roundabout_prearm")
         self.assertEqual(merge_camera_mode(1769, self.cfg), "roundabout_prearm")
         self.assertEqual(merge_camera_mode(1770, self.cfg), "roundabout")
         self.assertEqual(active_merge_cameras("roundabout_prearm"), ("left",))
