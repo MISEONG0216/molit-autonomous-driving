@@ -65,7 +65,13 @@
     "far_area_ratio": 0.006,
     "near_full_risk_area_ratio": 0.03,
     "far_risk_weight": 0.45,
-    "perception_tuning_note": "Roundabout WP1770-1820: use LEFT9293 only and ignore rear-left1118. Highway merge WP2480-2560 and WP3050-3190: use LEFT9293 + LEFT_REAR1118. Original V23 risk threshold 0.60 and near-vehicle risk function unchanged. Very small far-looking bboxes attenuated by area ratio; not a calibrated range or lane-ID model."
+    "perception_tuning_note": "Roundabout WP1770-1820: use LEFT9293 only and ignore rear-left1118. Highway merge WP2480-2560 and WP3050-3190: use LEFT9293 + LEFT_REAR1118. Original V23 risk threshold 0.60 and near-vehicle risk function unchanged. Very small far-looking bboxes attenuated by area ratio; not a calibrated range or lane-ID model.",
+    "rear_camera_release_wp_by_zone": {
+      "2480": 2538
+    },
+    "highway_yellow_no_speed_cap": true,
+    "post_merge_note": "Only for first highway merge: user screenshot + CSV indicate blocked at WP2538 after reported merge completion; rear-left is ignored from WP2538-2560, while LEFT9293 remains safety gate. Second merge WP3050-3190 keeps rear-left active; actual second completion WP not known. This is a waypoint assumption, not verified lane geometry. No time-based automatic creep if side lane is unsafe.",
+    "speed_note": "Highway merge SAFE/yellow no longer imposes 20kmh; existing V7 curvature, traffic, LiDAR, pedestrian and highway following restrictions remain. Roundabout WP1770-1820 still uses 20kmh cap and left-only risk."
   },
   "static": {
     "result_timeout_sec": 3.5,
