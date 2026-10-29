@@ -50,25 +50,27 @@ def choose_local_detour(points, cfg, active_side=None):
     if len(pts)<int(cfg.get("min_points",80)):
         return dict(fail,reason="SPARSE_FORWARD_SCAN")
     c=float(cfg.get("vehicle_half_width_m",.9))+float(cfg.get("margin_m",.45))
-    left=pts[(pts[:,1]>=c)&(pts[:,1]<=7.)&(pts[:,0]>=2.)]
-    right=pts[(pts[:,1]<=-c)&(pts[:,1]>=-7.)&(pts[:,0]>=2.)]
-    n=int(cfg.get("min_side_points",8))
-    if len(left)<n or len(right)<n:
-        return dict(fail,reason="SIDE_WALL_NOT_OBSERVED")
-    # Check a near-forward obstacle before a detour; do not plan unsafe
-    # transverse motion when a blockage is already too near.
+    # First distinguish a clear straight-ahead lane from a true obstruction.
+    # Wall visibility on BOTH sides is necessary for a lateral DETOUR, not
+    # for continuing the already camera-guided lane at low speed.
     immediate=pts[(pts[:,0]<=float(cfg.get("emergency_forward_m",2.5)))&
                   (np.abs(pts[:,1])<=c)]
     if len(immediate)>=int(cfg.get("obstacle_point_threshold",5)):
         return dict(fail,reason="IMMEDIATE_OBSTACLE")
-    # Trigger only for a real in-lane obstacle. Tunnel side walls alone
-    # must NOT cause a maneuver on an otherwise clear lane.
     obstacle = pts[(pts[:,0]>=float(cfg.get("obstacle_min_forward_m",3.0)))&
                    (pts[:,0]<=float(cfg.get("obstacle_max_forward_m",12.0)))&
                    (np.abs(pts[:,1])<=c)]
     obstacle_present = len(obstacle)>=int(cfg.get("obstacle_point_threshold",5))
     if not obstacle_present and active_side not in (1,-1):
         return {"status":"CLEAR","side":None,"path":[],"reason":"EGO_LANE_CLEAR"}
+
+    # Only after detecting a blockage should an uncertain wall observation
+    # prohibit initiating a sideways maneuver.
+    left=pts[(pts[:,1]>=c)&(pts[:,1]<=7.)&(pts[:,0]>=2.)]
+    right=pts[(pts[:,1]<=-c)&(pts[:,1]>=-7.)&(pts[:,0]>=2.)]
+    n=int(cfg.get("min_side_points",8))
+    if len(left)<n or len(right)<n:
+        return dict(fail,reason="SIDE_WALL_NOT_OBSERVED")
     candidates=[]
     for side in (1,-1):
         p=_path(side,cfg)
