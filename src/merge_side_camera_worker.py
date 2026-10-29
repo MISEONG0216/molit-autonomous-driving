@@ -170,15 +170,28 @@ def main():
                 frames[side] = frame
                 if not enabled:
                     continue
+                height, width = frame.shape[:2]
+                # Only roundabout LEFT9293: infer on the RIGHT HALF of the
+                # original image. Highway LEFT/LEFT_REAR remain full-frame.
+                roundabout_roi = (side == "left" and mode in
+                                  ("roundabout", "roundabout_prearm"))
+                crop_x = int(width * float(cfg.get(
+                    "roundabout_left_camera_min_x_ratio", 0.50
+                ))) if roundabout_roi else 0
+                inference_frame = frame[:, crop_x:] if roundabout_roi else frame
+                if inference_frame.shape[1] < 16:
+                    raise RuntimeError("Roundabout right-half ROI too narrow")
                 result = model.predict(
-                    frame, imgsz=args.imgsz, classes=CARS,
+                    inference_frame, imgsz=args.imgsz, classes=CARS,
                     conf=0.35, device=device, verbose=False,
                 )[0]
-                height, width = frame.shape[:2]
                 maximum = 0.0
                 biggest_area = 0.0
                 for box in result.boxes:
                     x1, y1, x2, y2 = map(float, box.xyxy[0].tolist())
+                    # YOLO crop coordinates -> original-frame coordinates.
+                    x1 += crop_x
+                    x2 += crop_x
                     area = max(0.0, (x2-x1)*(y2-y1)/float(width*height))
                     current = vehicle_risk(
                         x1, y1, x2, y2, width, height,
@@ -205,6 +218,14 @@ def main():
                 for side in cameras:
                     frame = frames.get(side)
                     frame = frame.copy() if frame is not None else np.zeros((480,640,3),np.uint8)
+                    if mode in ("roundabout", "roundabout_prearm") and side == "left":
+                        cut_x = int(frame.shape[1] * float(cfg.get(
+                            "roundabout_left_camera_min_x_ratio", 0.50)))
+                        cv2.line(frame, (cut_x, 0), (cut_x, frame.shape[0]-1),
+                                 (0, 0, 255), 2)
+                        cv2.putText(frame, "LEFT HALF IGNORED",
+                                    (8, 65), cv2.FONT_HERSHEY_SIMPLEX,
+                                    0.58, (0, 0, 255), 2)
                     if mode in ("roundabout", "roundabout_prearm", "post_merge", "roundabout_done") and side == "left_rear":
                         label = f"WP={latest_wp} REAR LEFT PAUSED ({mode.upper()})"
                     else:
