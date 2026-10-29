@@ -162,6 +162,7 @@ def main():
     planning_was_enabled = False
     shadow_verified = False
     shadow_side = None
+    shadow_locked_path = None
 
     print("[STATIC ZONES] " + str(static_zones))
     print(f"[STATIC AVOID SPEED] {avoidance_speed_kmh:.1f} km/h")
@@ -256,51 +257,82 @@ def main():
                     tracked, ego_x=ego_x, ego_y=ego_y, ego_yaw=ego_yaw, confidence=1.0
                 )
                 if gps_shadow:
-                    # GPS-free mode: plan in the vehicle frame, NOT in the
-                    # global-waypoint coordinate system. Global XY is only
-                    # used at the final UDP boundary to reuse original
-                    # main's local Pure Pursuit API; the path is re-built
-                    # from the current LiDAR scan each time.
-                    local = choose_local_detour(
-                        vehicle_points, ego_cfg, active_side=shadow_side
-                    )
-                    if local["status"] == "CLEAR":
-                        shadow_side = None
-                    elif local["status"] == "AVOIDING":
-                        shadow_side = local["side"]
-                    # A rejected path never grants movement.
-                    shadow_verified = local["status"] == "AVOIDING"
-                    if shadow_verified:
-                        xy = np.asarray(local["path"], dtype=float)
-                        cy, sy = math.cos(ego_yaw), math.sin(ego_yaw)
-                        global_xy = np.column_stack((
-                            ego_x + cy*xy[:,0] - sy*xy[:,1],
-                            ego_y + sy*xy[:,0] + cy*xy[:,1],
-                            np.zeros(len(xy))
-                        ))
-                        plan = PlanResult(
-                            "AVOIDING", global_xy, None,
-                            "LEFT" if local["side"] > 0 else "RIGHT",
-                            float(ego_cfg.get("avoidance_speed_kmh", 5.0)),
-                            "EGO_LOCAL_LIDAR_VERIFIED"
-                        )
-                        latch_state = "EGO_LIDAR_" + plan.avoidance_side
-                    elif local["status"] == "CLEAR":
-                        plan = PlanResult(
-                            "CLEAR", np.empty((0,3)), None, None, 0.0,
-                            "EGO_LIDAR_CLEAR"
-                        )
-                        latch_state = "EGO_LIDAR_CLEAR"
-                    else:
-                        plan = PlanResult(
-                            "STOP_REQUIRED", np.empty((0,3)), None, None,
-                            0.0, local["reason"]
-                        )
-                        latch_state = "EGO_LIDAR_STOP_" + local["reason"]
+                    # Create a vehicle-frame detour ONCE. Lock the selected
+                    # maneuver to avoid adding a new 1.6m lateral shift on
+                    # EVERY scan (which previously drove into tunnel walls).
+                    if shadow_locked_path is not None:
+                        locked_xy = shadow_locked_path[:, :2]
+                        nearest = int(np.argmin(np.sum(
+                            (locked_xy - np.array([ego_x, ego_y]))**2,axis=1
+                        )))
+                        if nearest >= len(locked_xy)-4:
+                            shadow_locked_path = None
+                            shadow_side = None
+                        else:
+                            # Revalidate the REMAINING locked route against
+                            # the newest vehicle-frame wall returns. Aborting
+                            # is safer than swapping sides mid-avoidance.
+                            remaining = shadow_locked_path[nearest:]
+                            wall_ok, reason = check_wall_clearance(
+                                remaining, (ego_x, ego_y, ego_yaw),
+                                vehicle_points, wall_cfg
+                            )
+                            if wall_ok:
+                                plan = PlanResult(
+                                    "AVOIDING", shadow_locked_path,
+                                    None, "LEFT" if shadow_side>0 else "RIGHT",
+                                    float(ego_cfg.get("avoidance_speed_kmh",5.0)),
+                                    "EGO_LOCKED_DETOUR"
+                                )
+                                shadow_verified = True
+                                latch_state = "EGO_LIDAR_LOCKED_" + plan.avoidance_side
+                            else:
+                                plan = PlanResult(
+                                    "STOP_REQUIRED", np.empty((0,3)), None,
+                                    None, 0.0, "EGO_LOCKED_BLOCKED:"+reason
+                                )
+                                shadow_verified = False
+                                latch_state = "EGO_LIDAR_BLOCKED_"+reason
+                    if shadow_locked_path is None:
+                        local = choose_local_detour(vehicle_points, ego_cfg)
+                        shadow_verified = local["status"] == "AVOIDING"
+                        if shadow_verified:
+                            shadow_side = local["side"]
+                            xy = np.asarray(local["path"], dtype=float)
+                            cy, sy = math.cos(ego_yaw), math.sin(ego_yaw)
+                            global_xy = np.column_stack((
+                                ego_x + cy*xy[:,0] - sy*xy[:,1],
+                                ego_y + sy*xy[:,0] + cy*xy[:,1],
+                                np.zeros(len(xy))
+                            ))
+                            # This is an ego-frame LiDAR maneuver expressed
+                            # in global XY only for legacy local PP interface.
+                            # It does not sample the global waypoint route.
+                            shadow_locked_path = global_xy
+                            plan = PlanResult(
+                                "AVOIDING", global_xy, None,
+                                "LEFT" if shadow_side>0 else "RIGHT",
+                                float(ego_cfg.get("avoidance_speed_kmh",5.0)),
+                                "EGO_LIDAR_INITIAL"
+                            )
+                            latch_state = "EGO_LIDAR_NEW_"+plan.avoidance_side
+                        elif local["status"] == "CLEAR":
+                            plan = PlanResult(
+                                "CLEAR", np.empty((0,3)), None, None, 0.,
+                                "EGO_LIDAR_CLEAR"
+                            )
+                            latch_state = "EGO_LIDAR_CLEAR"
+                        else:
+                            plan = PlanResult(
+                                "STOP_REQUIRED", np.empty((0,3)), None, None,
+                                0.0, local["reason"]
+                            )
+                            latch_state = "EGO_LIDAR_STOP_"+local["reason"]
                     raw_plan = plan
                 else:
-                    # GPS valid: retain original planner and path latch.
+                    # GPS is valid: preserve original global static planner.
                     shadow_side = None
+                    shadow_locked_path = None
                     raw_plan = planner.plan(
                         ego_x=ego_x, ego_y=ego_y, obstacles=planner_obstacles
                     )
