@@ -9,6 +9,7 @@ NEVER creates or transmits EgoCtrlCmd; GPS/IMU are owned by main only.
 """
 import argparse
 import csv
+import os
 import json
 import math
 import socket
@@ -128,16 +129,24 @@ def main():
     result_target = (result_cfg["bind_ip"], int(result_cfg["port"]))
     receiver = LidarReceiver(ip=lidar_ip, port=lidar_port)
 
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    log_path = LOG_DIR / ("static_worker_" + time.strftime("%Y%m%d_%H%M%S") + ".csv")
-    logfile = log_path.open("w", newline="", encoding="utf-8")
-    writer = csv.writer(logfile)
-    writer.writerow([
-        "scan", "ego_x", "ego_y", "raw_status", "status", "latch_state",
-        "objects", "tracked", "obstacle_id", "avoid_side", "path_points",
-        "recommended_kmh", "waypoint_index", "in_static_zone",
-        "latch_active", "static_zone_active",
-    ])
+    # Main integrated CSV already contains static state; don't duplicate it.
+    # Opt in to per-scan CSV only when debugging LiDAR.
+    csv_enabled = os.environ.get("STATIC_CSV_LOG", "0") == "1"
+    logfile = None
+    writer = None
+    log_path = None
+    if csv_enabled:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        log_path = LOG_DIR / ("static_worker_" + time.strftime("%Y%m%d_%H%M%S") + ".csv")
+        logfile = log_path.open("w", newline="", encoding="utf-8")
+        writer = csv.writer(logfile)
+        writer.writerow([
+            "scan", "ego_x", "ego_y", "raw_status", "status", "latch_state",
+            "objects", "tracked", "obstacle_id", "avoid_side", "path_points",
+            "recommended_kmh", "waypoint_index", "in_static_zone",
+            "latch_active", "static_zone_active",
+        ])
+    
 
     pose = None
     pose_time = 0.0
@@ -155,7 +164,10 @@ def main():
     print(f"[LIDAR] {lidar_ip}:{lidar_port}")
     print(f"[POSE] {pose_cfg['bind_ip']}:{pose_cfg['port']} from main")
     print(f"[RESULT] {result_target} to main")
-    print(f"[LOG] {log_path}")
+    if csv_enabled:
+        print(f"[LOG] {log_path}")
+    else:
+        print("[LOG] per-scan LiDAR CSV OFF; integrated main CSV stays ON")
 
     try:
         receiver.start()
@@ -268,15 +280,16 @@ def main():
                 packet.update(status="STOP_REQUIRED", path=[], latch_state="UDP_TOO_LARGE")
                 data = json.dumps(packet, separators=(",", ":")).encode("utf-8")
             result_sock.sendto(data, result_target)
-            writer.writerow([
-                scan_count, f"{ego_x:.3f}", f"{ego_y:.3f}",
+            if csv_enabled:
+                writer.writerow([
+                    scan_count, f"{ego_x:.3f}", f"{ego_y:.3f}",
                 raw_plan.status, status, latch_state,
                 len(obstacles), len(tracked), plan.obstacle_id, plan.avoidance_side,
                 len(selected_path), plan.recommended_speed_kph,
                 waypoint_index, int(inside_zone), int(latch.active),
-                int(zone_active),
-            ])
-            logfile.flush()
+                    int(zone_active),
+                ])
+                logfile.flush()
             if (status, latch_state) != previous_status:
                 print(
                     f"[STATIC] scan={scan_count} {raw_plan.status} -> {status} "
@@ -292,8 +305,9 @@ def main():
         receiver.stop()
         pose_sock.close()
         result_sock.close()
-        logfile.close()
-        print(f"[LOG SAVED] {log_path}")
+        if logfile is not None:
+            logfile.close()
+            print(f"[LOG SAVED] {log_path}")
 
 
 if __name__ == "__main__":
