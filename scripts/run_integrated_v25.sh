@@ -55,7 +55,7 @@ if [[ "$DETAILED_LOGS" == "1" ]]; then
   echo "[LOG] detailed mode: main CSV, LiDAR CSV and 4 worker .log files"
   python3 -u src/traffic_light_detector.py --relay-pedestrian >"logs/v25_traffic_${STAMP}.log" 2>&1 &
   PIDS+=("$!")
-  python3 -u src/dynamic_pedestrian_worker.py --show >"logs/v25_pedestrian_${STAMP}.log" 2>&1 &
+  python3 -u src/dynamic_pedestrian_worker.py --show --follow >"logs/v25_pedestrian_${STAMP}.log" 2>&1 &
   PIDS+=("$!")
   python3 -u src/lidar/static_avoidance_module.py >"logs/v25_static_${STAMP}.log" 2>&1 &
   PIDS+=("$!")
@@ -68,7 +68,7 @@ else
   echo "[LOG] compact mode: integrated CSV + $SESSION_LOG (all worker outputs)"
   python3 -u src/traffic_light_detector.py --relay-pedestrian >>"$SESSION_LOG" 2>&1 &
   PIDS+=("$!")
-  python3 -u src/dynamic_pedestrian_worker.py --show >>"$SESSION_LOG" 2>&1 &
+  python3 -u src/dynamic_pedestrian_worker.py --show --follow >>"$SESSION_LOG" 2>&1 &
   PIDS+=("$!")
   python3 -u src/lidar/static_avoidance_module.py >>"$SESSION_LOG" 2>&1 &
   PIDS+=("$!")
@@ -76,10 +76,11 @@ else
   PIDS+=("$!")
 fi
 sleep 2
-echo "[V25] main starting: --traffic --static --pedestrian --merge (all mission controls enabled)"
+echo "[V27] main starting: traffic, static, pedestrian, merge, highway-follow controls ON"
 echo "[V25] additional args: ${MAIN_ARGS[*]}"
 echo "[V25] if camera previews do not open, check session log or detailed logs."
 python3 src/main_integrated_v1.py \
   --traffic --static --static-control \
   --pedestrian --pedestrian-control \
-  --merge --merge-control --max-speed 57 "${MAIN_ARGS[@]}"
+  --merge --merge-control \
+  --follow --follow-control --max-speed 57 "${MAIN_ARGS[@]}"
