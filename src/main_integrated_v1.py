@@ -654,7 +654,9 @@ def main():
                 and pedestrian_age <= pedestrian_timeout_sec
                 and pedestrian_result.get("waypoint_index") is not None
                 and (
-                    in_dynamic_zone(
+                    (shadow_active and
+                     pedestrian_updated_at >= pedestrian_zone_entered_at)
+                    or in_dynamic_zone(
                         pedestrian_result["waypoint_index"], pedestrian_zones
                     ) or any(
                         start - max(0, int(pedestrian_cfg.get("prewarm_wp", 0)))
@@ -693,7 +695,9 @@ def main():
             static_fresh = bool(
                 static_plan["valid"] and static_age <= static_timeout_sec
             )
-            static_in_zone = in_static_zone(nearest_index, static_zones)
+            static_in_zone = (
+                in_static_zone(nearest_index, static_zones) or shadow_active
+            )
             # A route accepted in-zone keeps LiDAR fail-stop protection until
             # the worker reports geometric release, even past the zone end.
             if args.static and static_fresh:
@@ -707,7 +711,8 @@ def main():
             static_active = False
             static_stop = False
             if args.static_control and static_required:
-                # CLEAR: V7 speed. AVOIDING: low-speed locked local route.
+                # CLEAR: V7 or shadow-lane speed. AVOIDING: original
+                # LiDAR locked local route temporarily overrides lane steer.
                 # STOP, stale result, or mismatched zone: full brake.
                 if (
                     not static_fresh
@@ -739,6 +744,19 @@ def main():
                 elif static_active:
                     mission["reasons"].append("static_local_avoidance")
 
+            if shadow_active:
+                target_speed_kmh = min(
+                    target_speed_kmh,
+                    float(shadow_cfg.get("shadow_speed_kmh", 12.0)),
+                )
+                mission["reasons"].append(
+                    "gps_shadow_lane" if not static_active else
+                    "gps_shadow_lidar_avoid"
+                )
+                if shadow_stop:
+                    target_speed_kmh = 0.0
+                    mission["reasons"].append("gps_shadow_safe_stop")
+
             (
                 desired_accel,
                 desired_brake,
@@ -749,7 +767,8 @@ def main():
                 current_speed_kmh,
             )
 
-            if result is None and not static_active:
+            if result is None and not static_active and not (
+                    shadow_active and lane_fresh and not shadow_stop):
                 desired_accel = 0.0
                 desired_brake = base.PATH_LOST_BRAKE_CMD
                 control_zone = "PATH_LOST"
@@ -759,7 +778,7 @@ def main():
 
             if (args.traffic and mission["traffic_full_brake"]) or (
                 args.merge_control and mission["merge_stop"]
-            ) or (args.static_control and static_stop) or pedestrian_stop:
+            ) or (args.static_control and static_stop) or pedestrian_stop or shadow_stop:
                 # Any mission STOP commands full brake from main.
                 command_limiter.reset()
                 accel_cmd, brake_cmd, signed_cmd = 0.0, 1.0, -1.0
@@ -768,13 +787,14 @@ def main():
                     if args.traffic and mission["traffic_full_brake"]
                     else "MERGE_FULL_BRAKE" if args.merge_control and mission["merge_stop"]
                     else "STATIC_FULL_BRAKE" if args.static_control and static_stop
-                    else "PEDESTRIAN_FULL_BRAKE"
+                    else "PEDESTRIAN_FULL_BRAKE" if pedestrian_stop
+                    else "GPS_SHADOW_SAFE_STOP"
                 )
             elif (
                 (
                     (args.traffic and mission["traffic_approach"])
                     or (args.merge_control and mission["merge_zone"])
-                    or args.static_control
+                    or args.static_control or shadow_active
                 )
                 and current_speed_kmh > target_speed_kmh + 0.8
             ):
@@ -863,13 +883,19 @@ def main():
                 f"{follow_cap:.2f}" if follow_zone_active else "",
                 f"{follow_age:.3f}" if math.isfinite(follow_age) else "inf",
                 follow_msg["vehicles"] if follow_fresh else "",
+                gps_mode, f"{shadow_sec:.3f}",
+                int(lane_fresh), f"{lane_result['confidence']:.3f}",
+                f"{lane_result['steering']:.4f}", int(shadow_stop),
             ])
 
             print("\033[2J\033[H", end="")
             print("====================================================")
             print(" V7 + TRAFFIC + MERGE INTEGRATION V1")
             print("====================================================")
-            print(f"GPS         : {lat:.6f}, {lon:.6f}")
+            print(f"GPS         : {lat:.6f}, {lon:.6f} / MODE={gps_mode}"
+                  f" / outage={shadow_sec:.1f}s")
+            print(f"LANE        : fresh={lane_fresh} conf={lane_result['confidence']:.2f}"
+                  f" steer={lane_result['steering']:.3f} / SHADOW_STOP={shadow_stop}")
             print(
                 f"POSITION    : x={current_x:.3f}, y={current_y:.3f}"
             )
