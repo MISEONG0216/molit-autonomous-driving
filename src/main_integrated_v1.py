@@ -62,6 +62,12 @@ from integration.roundabout_early_steer import (
     RAMP_OUT_END_WP as EARLY_RIGHT_END_WP,
     MAX_EXTRA_RIGHT_DEG,
 )
+from integration.roundabout_speed_cap import (
+    build_roundabout_speed_caps,
+    HOLD_START_WP as ROUNDABOUT_SLOW_BEGIN_WP,
+    HOLD_END_WP as ROUNDABOUT_SLOW_END_WP,
+    MIN_TEST_HOLD_KMH, MAX_TEST_HOLD_KMH,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -117,6 +123,8 @@ def open_log():
         "roundabout_right_offset_m",
         "roundabout_early_right_deg",
         "roundabout_preassist_steering_deg",
+        "roundabout_speed_zone", "roundabout_speed_cap_kmh",
+        "roundabout_speed_brake_active",
     ])
     return path, f, w
 
@@ -164,6 +172,11 @@ def main():
         help="opt-in limited extra RIGHT steering at WP1843-1866 "
              "(0=OFF, test 4.0deg initially)",
     )
+    parser.add_argument(
+        "--roundabout-slow-kmh", type=float, default=0.0,
+        help="roundabout speed hold from WP1835 to WP1892, distance-based "
+             "braking preview + progressive release; 0=OFF, test 12",
+    )
     args = parser.parse_args()
 
     if args.merge_control and not args.merge:
@@ -178,6 +191,11 @@ def main():
         parser.error(f"--roundabout-offset-m must be between 0 and {MAX_ROUNDABOUT_OFFSET_M:.2f}")
     if not math.isfinite(args.roundabout_early_right_deg) or not (0.0 <= args.roundabout_early_right_deg <= MAX_EXTRA_RIGHT_DEG):
         parser.error(f"--roundabout-early-right-deg must be 0..{MAX_EXTRA_RIGHT_DEG:.1f}")
+    if not math.isfinite(args.roundabout_slow_kmh) or (
+        args.roundabout_slow_kmh != 0.0 and
+        not MIN_TEST_HOLD_KMH <= args.roundabout_slow_kmh <= MAX_TEST_HOLD_KMH
+    ):
+        parser.error(f"--roundabout-slow-kmh must be 0 (OFF) or {MIN_TEST_HOLD_KMH:.0f}..{MAX_TEST_HOLD_KMH:.0f}")
 
     network = load_json(NETWORK_FILE)
     missions = load_json(MISSION_FILE)
@@ -193,6 +211,9 @@ def main():
     tracking_path = make_right_offset_path(global_path, args.lane_offset_m)
     tracking_path = make_roundabout_exit_path(
         tracking_path, args.roundabout_offset_m,
+    )
+    roundabout_speed_caps, roundabout_speed_zones = build_roundabout_speed_caps(
+        global_path, args.max_speed, args.roundabout_slow_kmh,
     )
 
     gps_receiver = Receiver(
@@ -301,6 +322,11 @@ def main():
         f"ramp WP{EARLY_RIGHT_BEGIN_WP}-{EARLY_RIGHT_FULL_START_WP}, "
         f"full WP{EARLY_RIGHT_FULL_START_WP}-{EARLY_RIGHT_FULL_END_WP}, "
         f"release by WP{EARLY_RIGHT_END_WP}; zero=original V7"
+    )
+    print(
+        f"[ROUNDABOUT SLOW] target_hold={args.roundabout_slow_kmh:.1f}km/h "
+        f"WP{ROUNDABOUT_SLOW_BEGIN_WP}-{ROUNDABOUT_SLOW_END_WP}; "
+        "prebrake by route distance, then progressive release; 0=OFF"
     )
     print("[CTRL] single EgoCtrlCmd sender / ctrl_mode=2 / cmd_type=1")
     print(f"[MODE] {'DRIVE' if args.drive else 'DRY-RUN'}")
@@ -527,6 +553,25 @@ def main():
                 if early_right_applied_deg > 0.001:
                     mission["reasons"].append("roundabout_early_right_steer")
 
+            # Only the speed request changes; official waypoints and
+            # V7 steering remain untouched by roundabout speed control.
+            roundabout_speed_cap_kmh = float(
+                roundabout_speed_caps[nearest_index]
+            )
+            roundabout_speed_zone = roundabout_speed_zones[nearest_index]
+            speed_before_roundabout_cap = target_speed_kmh
+            if args.roundabout_slow_kmh > 0.0:
+                target_speed_kmh = min(
+                    target_speed_kmh, roundabout_speed_cap_kmh,
+                )
+            roundabout_speedcap_active = bool(
+                args.roundabout_slow_kmh > 0.0
+                and roundabout_speed_zone != "OFF"
+                and target_speed_kmh < speed_before_roundabout_cap - 0.01
+            )
+            if roundabout_speedcap_active:
+                mission["reasons"].append("roundabout_speed_cap")
+
             (
                 desired_accel,
                 desired_brake,
@@ -557,6 +602,22 @@ def main():
                     else "MERGE_FULL_BRAKE" if args.merge_control and mission["merge_stop"]
                     else "STATIC_FULL_BRAKE"
                 )
+            elif (
+                roundabout_speedcap_active
+                and result is not None
+                and current_speed_kmh > target_speed_kmh + 0.8
+            ):
+                # The baseline V7 cruise brake may be too gentle to reach the
+                # 12km/h target before WP1835. Limit this moderate brake to
+                # the opt-in roundabout speed-cap zone only.
+                command_limiter.reset()
+                speed_overshoot_kmh = current_speed_kmh - target_speed_kmh
+                speed_brake = min(
+                    0.22, max(0.10, 0.025 * speed_overshoot_kmh)
+                )
+                accel_cmd, brake_cmd = 0.0, speed_brake
+                signed_cmd = -brake_cmd
+                control_zone = "ROUNDABOUT_PREBRAKE"
             elif (
                 (
                     (args.traffic and mission["traffic_approach"])
@@ -642,6 +703,9 @@ def main():
                 f"{current_roundabout_right_offset_m:.3f}",
                 f"{early_right_applied_deg:.3f}",
                 f"{math.degrees(preassist_steering):.3f}",
+                roundabout_speed_zone,
+                f"{roundabout_speed_cap_kmh:.3f}",
+                int(control_zone == "ROUNDABOUT_PREBRAKE"),
             ])
 
             print("\033[2J\033[H", end="")
@@ -669,6 +733,12 @@ def main():
                 print(
                     f"EARLY RIGHT : +{early_right_applied_deg:.2f} deg "
                     f"(right only) / original steer {math.degrees(preassist_steering):+.2f} deg"
+                )
+            if args.roundabout_slow_kmh > 0.0:
+                print(
+                    f"RB SPEED CAP: {roundabout_speed_cap_kmh:.2f} km/h "
+                    f"/ {roundabout_speed_zone} "
+                    f"/ hold WP{ROUNDABOUT_SLOW_BEGIN_WP}-{ROUNDABOUT_SLOW_END_WP}"
                 )
             print(f"BASE TARGET : {base_target:.2f} km/h")
             print(f"FINAL TARGET: {target_speed_kmh:.2f} km/h")
