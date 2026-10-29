@@ -248,7 +248,9 @@ def main():
             matrix = get_birdview_matrix(cv2, frame.shape)
             crop_h = int(h * HOOD_CROP_RATIO)
             roi_frame = frame[:crop_h, :]
-            results = yolo_model(roi_frame, verbose=False)[0]
+            # Avoid spending inference on unrelated classes in highway mode.
+            detect_classes = list(FRONT_CLASSES) if ped_enabled else [2, 5, 7]
+            results = yolo_model(roi_frame, classes=detect_classes, verbose=False)[0]
             detections = []
             for box in results.boxes:
                 cls = int(box.cls[0])
@@ -284,6 +286,15 @@ def main():
                          * np.asarray([w, h], dtype=np.float32)).astype(np.int32)
             curr_bbox_areas = []
             for idx, (x1, y1, x2, y2, conf, cls) in enumerate(detections):
+                # The supplied trapezoid filters objects by their bounding-box
+                # bottom center. Neither risk nor drawing includes adjacent lanes.
+                if follow_enabled and (
+                    cls not in (2, 5, 7)
+                    or cv2.pointPolygonTest(
+                        lane_poly, ((x1+x2)*0.5, y2), False
+                    ) < 0
+                ):
+                    continue
                 bbox_area = (x2 - x1) * (y2 - y1)
                 curr_bbox_areas.append(bbox_area)
                 approach = 0.0
@@ -306,11 +317,8 @@ def main():
                     persons += 1
                     max_person_risk = max(max_person_risk, risk)
                 if cls in (2, 5, 7) and follow_enabled:
-                    bottom_center = ((x1+x2)*0.5, y2)
-                    in_lane = cv2.pointPolygonTest(lane_poly, bottom_center, False) >= 0
-                    if in_lane:
-                        vehicles += 1
-                        max_vehicle_risk = max(max_vehicle_risk, risk)
+                    vehicles += 1
+                    max_vehicle_risk = max(max_vehicle_risk, risk)
                 if args.show:
                     color = (0, 0, 255) if cls == 0 and risk >= threshold else (0, 200, 0)
                     cv2.rectangle(
