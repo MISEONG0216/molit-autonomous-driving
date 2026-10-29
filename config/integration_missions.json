@@ -140,5 +140,30 @@
     "prewarm_result_age_sec": 1,
     "lost_vehicle_hold_sec": 0.8,
     "near_roi_note": "Full-frame near-field trapezoid with overlap-based selection, hood crop 0.98 in follow mode; retains last close-vehicle risk for <=0.8s then fades by 1.6s. Not calibrated distance or collision prevention."
+  },
+  "gps_shadow": {
+    "enabled_by_launch": true,
+    "stale_moving_sec": 1.7,
+    "moving_threshold_kmh": 2,
+    "gps_change_threshold_m": 0.08,
+    "gps_recovery_samples": 3,
+    "gps_recovery_max_error_m": 6,
+    "max_shadow_sec": 12,
+    "max_shadow_distance_m": 35,
+    "max_update_gap_sec": 0.8,
+    "max_shadow_path_offset_m": 7,
+    "shadow_speed_kmh": 12,
+    "lane_result_timeout_sec": 0.8,
+    "lane_max_hz": 12,
+    "min_confidence": 0.35,
+    "ema_alpha": 0.25,
+    "window_margin_px": 80,
+    "min_lane_pixels": 80,
+    "min_lane_width_ratio": 0.16,
+    "max_lane_width_ratio": 0.78,
+    "confidence_pixel_scale": 700,
+    "steer_gain_rad": 0.2,
+    "max_steer_rad": 0.22,
+    "notes": "Based on provided morai_lanenet_viz.py HSV/Canny/BEV/EMA, not actual TensorFlow LaneNet. On GPS missing/unchanged while moving, camera lane steer is PRIMARY. Bounded IMU+speed dead reckoning is only for original LiDAR planner alignment and approximate WP gates, never for primary steering. Never continue blindly: no initial fix, stale lane, invalid lane, IMU/status failure, pose gap>0.8s, >12s or >35m blackout or >7m path offset => full stop. Full-vehicle dynamic traffic detection is NOT covered; existing pedestrian YOLO/MiDaS only."
   }
 }
