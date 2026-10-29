@@ -54,6 +54,14 @@ from integration.roundabout_exit_offset import (
     RAMP_OUT_END_WP as ROUNDABOUT_END_WP,
     MAX_RIGHT_OFFSET_M as MAX_ROUNDABOUT_OFFSET_M,
 )
+from integration.roundabout_early_steer import (
+    add_early_right_steering,
+    RAMP_IN_START_WP as EARLY_RIGHT_BEGIN_WP,
+    FULL_START_WP as EARLY_RIGHT_FULL_START_WP,
+    FULL_END_WP as EARLY_RIGHT_FULL_END_WP,
+    RAMP_OUT_END_WP as EARLY_RIGHT_END_WP,
+    MAX_EXTRA_RIGHT_DEG,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -107,6 +115,8 @@ def open_log():
         "traffic_green_count_620",
         "lane_right_offset_m", "tracking_path_dist_m",
         "roundabout_right_offset_m",
+        "roundabout_early_right_deg",
+        "roundabout_preassist_steering_deg",
     ])
     return path, f, w
 
@@ -149,6 +159,11 @@ def main():
         help="opt-in local RIGHT shift near roundabout exit WP1859-1902; "
              "start with 0.25m, 0=original WP path",
     )
+    parser.add_argument(
+        "--roundabout-early-right-deg", type=float, default=0.0,
+        help="opt-in limited extra RIGHT steering at WP1843-1866 "
+             "(0=OFF, test 4.0deg initially)",
+    )
     args = parser.parse_args()
 
     if args.merge_control and not args.merge:
@@ -161,6 +176,8 @@ def main():
         parser.error(f"--lane-offset-m must be between 0 and {MAX_TEST_OFFSET_M:.2f}")
     if not math.isfinite(args.roundabout_offset_m) or not (0.0 <= args.roundabout_offset_m <= MAX_ROUNDABOUT_OFFSET_M):
         parser.error(f"--roundabout-offset-m must be between 0 and {MAX_ROUNDABOUT_OFFSET_M:.2f}")
+    if not math.isfinite(args.roundabout_early_right_deg) or not (0.0 <= args.roundabout_early_right_deg <= MAX_EXTRA_RIGHT_DEG):
+        parser.error(f"--roundabout-early-right-deg must be 0..{MAX_EXTRA_RIGHT_DEG:.1f}")
 
     network = load_json(NETWORK_FILE)
     missions = load_json(MISSION_FILE)
@@ -278,6 +295,12 @@ def main():
         f"ramp {ROUNDABOUT_START_WP}-{ROUNDABOUT_FULL_START_WP}, "
         f"hold {ROUNDABOUT_FULL_START_WP}-{ROUNDABOUT_FULL_END_WP}, "
         f"release to {ROUNDABOUT_END_WP}"
+    )
+    print(
+        f"[ROUNDABOUT EARLY RIGHT] max={args.roundabout_early_right_deg:.1f}deg, "
+        f"ramp WP{EARLY_RIGHT_BEGIN_WP}-{EARLY_RIGHT_FULL_START_WP}, "
+        f"full WP{EARLY_RIGHT_FULL_START_WP}-{EARLY_RIGHT_FULL_END_WP}, "
+        f"release by WP{EARLY_RIGHT_END_WP}; zero=original V7"
     )
     print("[CTRL] single EgoCtrlCmd sender / ctrl_mode=2 / cmd_type=1")
     print(f"[MODE] {'DRIVE' if args.drive else 'DRY-RUN'}")
@@ -486,6 +509,24 @@ def main():
                 elif static_active:
                     mission["reasons"].append("static_local_avoidance")
 
+            # Extra early right steering at the roundabout EXIT ONLY.
+            # Never override LiDAR local avoidance or STOP decisions.
+            preassist_steering = steering
+            early_right_applied_deg = 0.0
+            if (
+                args.roundabout_early_right_deg > 0.0
+                and result is not None
+                and not static_active
+                and not static_stop
+                and not mission["traffic_full_brake"]
+                and not (args.merge_control and mission["merge_stop"])
+            ):
+                steering, early_right_applied_deg = add_early_right_steering(
+                    steering, nearest_index, args.roundabout_early_right_deg,
+                )
+                if early_right_applied_deg > 0.001:
+                    mission["reasons"].append("roundabout_early_right_steer")
+
             (
                 desired_accel,
                 desired_brake,
@@ -599,6 +640,8 @@ def main():
                 f"{current_lane_right_offset_m:.3f}",
                 f"{tracking_distance:.3f}",
                 f"{current_roundabout_right_offset_m:.3f}",
+                f"{early_right_applied_deg:.3f}",
+                f"{math.degrees(preassist_steering):.3f}",
             ])
 
             print("\033[2J\033[H", end="")
@@ -621,6 +664,11 @@ def main():
                 print(
                     f"ROUNDABOUT  : RIGHT {current_roundabout_right_offset_m:.3f} m "
                     f"/ TRACK DIST {tracking_distance:.3f} m"
+                )
+            if args.roundabout_early_right_deg > 0.0:
+                print(
+                    f"EARLY RIGHT : +{early_right_applied_deg:.2f} deg "
+                    f"(right only) / original steer {math.degrees(preassist_steering):+.2f} deg"
                 )
             print(f"BASE TARGET : {base_target:.2f} km/h")
             print(f"FINAL TARGET: {target_speed_kmh:.2f} km/h")
