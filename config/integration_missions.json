@@ -208,10 +208,18 @@
     "allowed_points": 0,
     "avoidance_speed_kmh": 5,
     "max_result_age_sec": 1.6,
-    "notes": "Vehicle-frame current LiDAR wall+obstacle clearance. Detour is chosen ONCE, locked, and remaining polyline rechecked; global path not used to generate shadow detour. All ranges are uncalibrated trial values; rejection STOP is expected if walls or observed points obstruct either side.",
+    "notes": "V39: GPS shadow candidate offsets 0.8..2.6 in 0.2m increments; finish shift before obstacle near edge and do not reenter original lane until beyond far edge+2.5m. Use full-point LiDAR swept envelope and observed endpoint. No automatic reverse. Uncalibrated; STOP if no observed safe route.",
     "release_tail_points": 9,
     "release_end_distance_m": 4.5,
     "release_clear_ahead_m": 6,
-    "release_max_front_points": 5
+    "release_max_front_points": 5,
+    "minimum_offset_m": 0.8,
+    "maximum_offset_m": 2.6,
+    "offset_step_m": 0.2,
+    "obstacle_before_margin_m": 1.5,
+    "obstacle_after_margin_m": 2.5,
+    "return_length_m": 5,
+    "max_horizon_m": 24,
+    "max_unobserved_tail_m": 2
   }
 }
