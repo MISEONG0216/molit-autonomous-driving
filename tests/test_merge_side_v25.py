@@ -57,6 +57,19 @@ class MergeSideV25Test(unittest.TestCase):
         self.assertNotIn("EgoCtrlCmd(", source)
         self.assertNotIn("send_stop(", source)
 
+    def test_left_plus_left_rear_and_no_right_camera(self):
+        self.assertEqual(self.cfg["side_camera_ports"], [9293])
+        self.assertIsNone(self.cfg["rear_left_camera_port"])
+        source = (ROOT / "src/merge_side_camera_worker.py").read_text(encoding="utf-8")
+        self.assertIn('("left", 9293), ("left_rear", rear_port)', source)
+        self.assertNotIn('("right", 9295)', source)
+        self.assertIn('rear_port in (9291, 9293, 9295', source)
+
+    def test_launcher_blocks_unknown_left_rear_port(self):
+        source = (ROOT / "scripts/run_integrated_v25.sh").read_text(encoding="utf-8")
+        self.assertIn("rear_left_camera_port", source)
+        self.assertIn("Launcher stopped before any vehicle control", source)
+
     def test_main_has_waypoint_merge_gate(self):
         source = (ROOT / "src/main_integrated_v1.py").read_text(encoding="utf-8")
         ast.parse(source)
