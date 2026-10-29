@@ -41,6 +41,11 @@ from integration.static_avoidance_io import (
 from integration.static_zone import load_static_zones, in_static_zone
 from integration.lane_diagnostics import path_tracking_metrics
 from integration.beomsu_lane_guard import make_zones, make_tracking_path, offset_at_waypoint, TEST_SPEED_LIMIT_KMH
+from integration.roundabout_exit_offset import (
+    make_roundabout_exit_path,
+    offset_at_waypoint as roundabout_offset_at_waypoint,
+)
+from integration.roundabout_speed_cap import build_roundabout_speed_caps
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -98,6 +103,8 @@ def open_log():
         "v7_effective_lfd_m", "v7_steering_gain", "v7_target_wp",
         "v7_switch_bias", "tracking_path_source",
         "beomsu_offset_m", "beomsu_tracking_dist_m", "beomsu_zone_active",
+        "beomsu_roundabout_right_m", "beomsu_roundabout_speed_cap_kmh",
+        "beomsu_roundabout_speed_zone",
     ])
     return path, f, w
 
@@ -135,6 +142,10 @@ def main():
     parser.add_argument("--beomsu-extra-zone", action="append", default=[],
                         metavar="START:END:SIGNED_METRES",
                         help="Experimental zone; +right/-left; use only after waypoint verification")
+    parser.add_argument("--beomsu-roundabout-right-m", type=float, default=0.0,
+                        help="Opt-in smooth RIGHT offset WP1859-1902; initial low-speed test 0.20m")
+    parser.add_argument("--beomsu-roundabout-kmh", type=float, default=0.0,
+                        help="Opt-in distance-preview roundabout speed hold WP1835-1892; test 12km/h")
     args = parser.parse_args()
 
     if args.merge_control and not args.merge:
@@ -153,6 +164,12 @@ def main():
     try:
         lane_zones = make_zones(len(global_path), args.beomsu_first_right_m, args.beomsu_extra_zone)
         tracking_path = make_tracking_path(global_path, lane_zones)
+        tracking_path = make_roundabout_exit_path(
+            tracking_path, args.beomsu_roundabout_right_m
+        )
+        roundabout_speed_caps, roundabout_speed_zones = build_roundabout_speed_caps(
+            global_path, args.max_speed, args.beomsu_roundabout_kmh
+        )
     except ValueError as exc:
         parser.error(str(exc))
     target_profile, radius_profile, full_profile = (
@@ -275,6 +292,9 @@ def main():
         print(f"[STATIC POSE] {pose_target}")
         print(f"[STATIC RESULT] {network['static_result']}")
     print(f"[BEOMSU LANE] zones={lane_zones} / default OFF / cap={TEST_SPEED_LIMIT_KMH:.1f}km/h in offset zones")
+    print(f"[ROUNDABOUT BEOMSU] right_offset={args.beomsu_roundabout_right_m:+.2f}m "
+          f"WP1859-1902 / speed_hold={args.beomsu_roundabout_kmh:.1f}km/h "
+          f"WP1835-1892 / 0=OFF")
     print(f"[LOG] {log_path}")
 
     try:
@@ -395,6 +415,11 @@ def main():
             lane_offset_m = offset_at_waypoint(nearest_index, lane_zones)
             tracking_distance_m = math.hypot(tracking_path[nearest_index, 0] - current_x,
                                              tracking_path[nearest_index, 1] - current_y)
+            roundabout_right_m = roundabout_offset_at_waypoint(
+                nearest_index, args.beomsu_roundabout_right_m
+            )
+            roundabout_cap_kmh = float(roundabout_speed_caps[nearest_index])
+            roundabout_speed_zone = roundabout_speed_zones[nearest_index]
 
             mission = mission_manager.apply(
                 nearest_index=nearest_index,
@@ -414,6 +439,9 @@ def main():
             if lane_offset_m != 0.0:
                 target_speed_kmh = min(target_speed_kmh, TEST_SPEED_LIMIT_KMH)
                 mission["reasons"].append("beomsu_lane_offset_speed_cap")
+            if roundabout_speed_zone != "OFF":
+                target_speed_kmh = min(target_speed_kmh, roundabout_cap_kmh)
+                mission["reasons"].append("beomsu_roundabout_speed_cap")
 
             # UDP poll() can timestamp a new packet a few milliseconds
             # after loop_start ("now"). Do not flag a fresh plan as stale
@@ -613,6 +641,8 @@ def main():
                 tracking_path_source,
                 f"{lane_offset_m:+.3f}", f"{tracking_distance_m:.3f}",
                 int(lane_offset_m != 0.0),
+                f"{roundabout_right_m:+.3f}", f"{roundabout_cap_kmh:.3f}",
+                roundabout_speed_zone,
             ])
 
             print("\033[2J\033[H", end="")
@@ -637,6 +667,10 @@ def main():
             )
             print(f"TRACK PATH  : {tracking_path_source} (CTE always vs global path)")
             print(f"BEOMSU PATH : offset={lane_offset_m:+.3f}m / dist={tracking_distance_m:.3f}m")
+            if args.beomsu_roundabout_right_m > 0.0 or args.beomsu_roundabout_kmh > 0.0:
+                print(f"ROUNDABOUT  : right={roundabout_right_m:+.3f}m / "
+                      f"cap={roundabout_cap_kmh:.2f}km/h / {roundabout_speed_zone}")
+
             print(f"BASE TARGET : {base_target:.2f} km/h")
             print(f"FINAL TARGET: {target_speed_kmh:.2f} km/h")
             print(f"COMP SPEED  : {current_speed_kmh:.2f} km/h")
