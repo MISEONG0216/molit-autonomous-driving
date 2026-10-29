@@ -97,15 +97,18 @@ class SecondGreenReleaseTests(unittest.TestCase):
         self.assertEqual(curved["target_speed_kmh"], 28.0)
         self.assertTrue(curved["second_green_bypass"])
 
-    def test_red_immediately_cancels_bypass_and_brakes(self):
+    def test_red_immediately_cancels_bypass_and_creeps_to_wp610(self):
         self.confirm_green()
         self.signal("STOP", 100.3)
         r = self.approach(560, now=100.31)
-        self.assertTrue(r["traffic_full_brake"])
+        self.assertFalse(r["traffic_full_brake"])
         self.assertTrue(r["red_latched"])
         self.assertFalse(r["second_green_bypass"])
         self.assertEqual(r["second_green_count"], 0)
-        self.assertEqual(r["target_speed_kmh"], 0)
+        self.assertEqual(r["target_speed_kmh"], 5.0)
+        at_gate = self.approach(610, now=100.32)
+        self.assertTrue(at_gate["traffic_full_brake"])
+        self.assertEqual(at_gate["target_speed_kmh"], 0.0)
 
     def test_red_latch_requires_eight_new_go_packets_to_release(self):
         self.confirm_green()
@@ -116,7 +119,7 @@ class SecondGreenReleaseTests(unittest.TestCase):
             self.signal("GO", ts)
             r = self.approach(565, now=ts + 0.01)
             self.assertTrue(r["red_latched"])
-            self.assertEqual(r["target_speed_kmh"], 0)
+            self.assertEqual(r["target_speed_kmh"], 5.0)
             self.assertFalse(r["second_green_bypass"])
         self.signal("GO", 101.0)
         r = self.approach(566, now=101.01)
