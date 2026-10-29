@@ -77,7 +77,9 @@
     "roundabout_completion_min_wp": 1800,
     "roundabout_progress_wp": 10,
     "roundabout_completion_note": "Provisional: only after actual STOP/vision-wait + 3 distinct safe camera packets + >=10 WP progress AND WP>=1800, roundabout merge camera is ignored until WP1820. This is not surveyed lane-clearance geometry; validate visually in MORAI before high-speed testing.",
-    "prewarm_note": "Enable side inference 70 waypoints (~35m at typical 0.5m spacing) before active zone; control remains restricted to active zones. Safe prewarm packets <=1s old are accepted at entry; missing/unsafe packets still stop."
+    "prewarm_note": "Enable side inference 70 waypoints (~35m at typical 0.5m spacing) before active zone; control remains restricted to active zones. Safe prewarm packets <=1s old are accepted at entry; missing/unsafe packets still stop.",
+    "roundabout_left_camera_min_x_ratio": 0.5,
+    "roundabout_left_camera_roi_note": "Roundabout and roundabout_prearm ONLY: infer vehicles on the RIGHT half (original image x>=0.50*width) of LEFT UDP9293. Ignore left half. Highway LEFT/LEFT_REAR inference is full-frame, unchanged. Mask may miss an approaching roundabout vehicle, validate in supervised MORAI test."
   },
   "static": {
     "result_timeout_sec": 3.5,
