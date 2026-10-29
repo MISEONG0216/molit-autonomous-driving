@@ -39,7 +39,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 # Default: ONE main CSV and ONE shared worker log per run.
-# Optional --detailed-logs: per-worker logs plus LiDAR per-scan CSV.
+# Optional --detailed-logs: per-worker logs (including lane) plus LiDAR per-scan CSV.
 DETAILED_LOGS=0
 MAIN_ARGS=()
 for arg in "$@"; do
@@ -52,7 +52,7 @@ done
 STAMP="$(date +%Y%m%d_%H%M%S)"
 if [[ "$DETAILED_LOGS" == "1" ]]; then
   export STATIC_CSV_LOG=1
-  echo "[LOG] detailed mode: main CSV, LiDAR CSV and 4 worker .log files"
+  echo "[LOG] detailed mode: main CSV, LiDAR CSV and 5 worker .log files"
   python3 -u src/traffic_light_detector.py --relay-pedestrian --relay-lane >"logs/v25_traffic_${STAMP}.log" 2>&1 &
   PIDS+=("$!")
   python3 -u src/dynamic_pedestrian_worker.py --show --follow >"logs/v25_pedestrian_${STAMP}.log" 2>&1 &
