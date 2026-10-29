@@ -19,7 +19,10 @@ from pathlib import Path
 import numpy as np
 
 from integration.dynamic_pedestrian_io import load_dynamic_zones, in_dynamic_zone
-from integration.highway_follow_io import LANE_ROI_RATIO, in_follow_zone, grade_speed_cap
+from integration.highway_follow_io import (
+    LANE_ROI_RATIO, in_follow_zone, grade_speed_cap,
+    vehicle_overlaps_lane, retained_follow_risk,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 NETWORK = ROOT / "config" / "integration_network.json"
@@ -160,6 +163,8 @@ def main():
     follow_target = (("127.0.0.1", int(follow_out_cfg["port"]))
                      if args.follow else None)
     follow_risk_held = 0.0
+    follow_last_seen = float("-inf")
+    follow_last_risk = 0.0
     assembler = JpegStreamAssembler()
     frame_number = 0
     depth_cache = None
@@ -196,15 +201,26 @@ def main():
                     pass
             gate_fresh = (last_gate_wp is not None
                           and time.monotonic() - last_gate_time <= 1.0)
-            ped_enabled = bool(gate_fresh and in_dynamic_zone(last_gate_wp, zones))
-            follow_enabled = bool(args.follow and gate_fresh
-                                  and in_follow_zone(last_gate_wp, follow_cfg, 4430))
+            ped_prearm_wp = max(0, int(mission.get("prewarm_wp", 0)))
+            follow_prearm_wp = max(0, int(follow_cfg.get("prewarm_wp", 0)))
+            ped_enabled = bool(gate_fresh and (
+                in_dynamic_zone(last_gate_wp, zones) or
+                any(start-ped_prearm_wp <= last_gate_wp < start
+                    for start, end in zones)
+            ))
+            follow_enabled = bool(args.follow and gate_fresh and (
+                in_follow_zone(last_gate_wp, follow_cfg, 4430) or
+                any(start-follow_prearm_wp <= last_gate_wp < start
+                    for start, end in follow_cfg.get("zones_wp", []))
+            ))
             enabled = ped_enabled or follow_enabled
             if enabled != previously_enabled:
                 assembler.buffer = b""
                 prev_bbox_areas = []
                 depth_cache = None
                 follow_risk_held = 0.0
+                follow_last_seen = float("-inf")
+                follow_last_risk = 0.0
                 print(
                     f"[PEDESTRIAN/FOLLOW] ZONE {'ON' if enabled else 'OFF'}"
                     f" wp={last_gate_wp}"
@@ -246,7 +262,9 @@ def main():
             frame_number += 1
             h, w = frame.shape[:2]
             matrix = get_birdview_matrix(cv2, frame.shape)
-            crop_h = int(h * HOOD_CROP_RATIO)
+            # Highway: keep near-field vehicles, even if their boxes touch
+            # the bottom edge. Pedestrian-only path retains the old crop.
+            crop_h = int(h * (0.98 if follow_enabled else HOOD_CROP_RATIO))
             roi_frame = frame[:crop_h, :]
             # Avoid spending inference on unrelated classes in highway mode.
             detect_classes = list(FRONT_CLASSES) if ped_enabled else [2, 5, 7]
@@ -260,7 +278,7 @@ def main():
                 x1, y1, x2, y2 = [
                     float(z) for z in box.xyxy[0].cpu().numpy()
                 ]
-                if y2 >= crop_h - 10 and (x2 - x1) > w * 0.5:
+                if not follow_enabled and y2 >= crop_h - 10 and (x2 - x1) > w * 0.5:
                     continue
                 detections.append((x1, y1, x2, y2, conf, cls))
 
@@ -290,9 +308,7 @@ def main():
                 # bottom center. Neither risk nor drawing includes adjacent lanes.
                 if follow_enabled and (
                     cls not in (2, 5, 7)
-                    or cv2.pointPolygonTest(
-                        lane_poly, ((x1+x2)*0.5, y2), False
-                    ) < 0
+                    or not vehicle_overlaps_lane(x1, y1, x2, y2, w, h)
                 ):
                     continue
                 # Align approach-area history with *filtered* in-lane boxes,
@@ -358,7 +374,15 @@ def main():
             if follow_enabled:
                 # Immediate rise, controlled release. Prevent the rapidly
                 # alternating 0.1/0.58 scores seen in prior pedestrian logs.
-                follow_risk_held = max(max_vehicle_risk, 0.80 * follow_risk_held)
+                if vehicles:
+                    follow_last_seen = time.monotonic()
+                    follow_last_risk = max_vehicle_risk
+                risk_with_memory = retained_follow_risk(
+                    max_vehicle_risk, follow_last_risk,
+                    time.monotonic() - follow_last_seen,
+                    hold_sec=float(follow_cfg.get("lost_vehicle_hold_sec", 0.8)),
+                )
+                follow_risk_held = max(risk_with_memory, 0.80 * follow_risk_held)
                 grade, cap = grade_speed_cap(follow_risk_held)
                 follow_packet = {
                     "kind": "HIGHWAY_FOLLOW", "waypoint_index": last_gate_wp,
