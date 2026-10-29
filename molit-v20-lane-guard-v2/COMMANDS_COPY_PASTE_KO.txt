@@ -1,0 +1,32 @@
+[기존 노트북 - GitHub 새 브랜치 업로드]
+cd "C:\MORAI\transfer_kit\molit-v20-lane-guard-v2"
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\publish_to_github.ps1
+
+[다른 노트북 - 최초 설치]
+py -3.11 --version
+git --version
+New-Item -ItemType Directory -Force C:\MORAI | Out-Null
+cd C:\MORAI
+git clone --single-branch --branch v20-lane-guard-v2-20261030 https://github.com/MISEONG0216/molit-autonomous-driving.git molit-v20-v2
+cd .\molit-v20-v2
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+$env:PYTHONUTF8 = "1"
+.\setup_v20_windows.ps1 -ControlIP 127.0.0.1
+.\check_v20_windows.ps1
+
+[각 터미널 공통]
+cd C:\MORAI\molit-v20-v2
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+$env:PYTHONUTF8 = "1"
+
+[터미널 1]
+.\run_v20_windows.ps1 -Mode traffic
+[터미널 2]
+.\run_v20_windows.ps1 -Mode lidar
+[터미널 3 테스트]
+.\run_v20_windows.ps1 -Mode dry -Traffic -Static -MaxSpeed 10
+[터미널 3 실제 저속]
+.\run_v20_windows.ps1 -Mode drive -Traffic -Static -StaticControl -MaxSpeed 10 -ConfirmDrive
+[터미널 3 실제 57 목표상한 / 저속검증 후]
+.\run_v20_windows.ps1 -Mode drive -Traffic -Static -StaticControl -MaxSpeed 57 -ConfirmDrive

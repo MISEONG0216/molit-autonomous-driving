@@ -1,0 +1,20 @@
+{
+  "drivable_width_m": 7,
+  "vehicle_width_m": 1.8,
+  "safety_margin_m": 0.4,
+  "detect_ahead_m": 35,
+  "approach_m": 12,
+  "hold_before_m": 3,
+  "hold_after_m": 5,
+  "return_m": 12,
+  "candidate_offsets_m": [
+    -2.2,
+    -1.8,
+    1.8,
+    2.2
+  ],
+  "output_spacing_hint_m": 0.5,
+  "min_static_obstacle_width_m": 0.6,
+  "avoid_trigger_distance_m": 15,
+  "min_static_obstacle_height_m": 0.2
+}

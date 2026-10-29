@@ -1,0 +1,72 @@
+{
+  "traffic": {
+    "signal_timeout_sec": 1.2,
+    "go_release_confirm_loops": 8,
+    "approach_distance_m": 60,
+    "approach_speed_kmh": 30,
+    "approach_brake_min_cmd": 0.14,
+    "approach_brake_gain": 0.028,
+    "approach_brake_max_cmd": 0.5,
+    "stop_overrides": {
+      "620": {
+        "approach_distance_m": 100,
+        "approach_speed_kmh": 25,
+        "near_distance_m": 35,
+        "near_speed_kmh": 10
+      },
+      "1224": {
+        "approach_distance_m": 35,
+        "approach_speed_kmh": 20,
+        "near_distance_m": 15,
+        "near_speed_kmh": 8,
+        "signal_activation_index": 1150
+      }
+    },
+    "left_turn_stops": [
+      1224
+    ],
+    "ignore_signal_stops": [
+      1104
+    ],
+    "left_only_stops": [
+      1224
+    ]
+  },
+  "merge": {
+    "result_timeout_sec": 2,
+    "zones": [
+      [
+        2480,
+        2560
+      ],
+      [
+        3050,
+        3190
+      ]
+    ],
+    "roundabout_zones": [
+      [
+        1770,
+        1820
+      ]
+    ],
+    "zone_speed_kmh": 20,
+    "risk_stop_threshold": 0.6,
+    "accept_confirm_frames": 3,
+    "test_zone_note": "User-surveyed MORAI waypoint ranges: roundabout 1770-1820, merge1 2480-2560, merge2 3050-3190."
+  },
+  "static": {
+    "result_timeout_sec": 3.5,
+    "source_branch": "lidar_object_detection",
+    "source_file": "src/lidar/lidar_static_avoidance_drive_5kph.py",
+    "note": "Static local-avoidance speed target/cap: 25 km/h, only in the designated static mission WP590-760 or while a path started there remains latched. CLEAR follows the existing V7 profile (up to 57 km/h), traffic logic unchanged; STOP_REQUIRED or stale active sensor still brakes. Transition from 57 km/h at a 15 m obstacle trigger has not been validated.",
+    "avoidance_zones_wp": [
+      [
+        590,
+        760
+      ]
+    ],
+    "zone_note": "Provisional from Oct 28 run: designated static obstacle was avoided WP635-697; false avoidance WP862-921 and WP1270-1323. Confirm exact scenario start/end against MORAI before competition.",
+    "avoidance_speed_kmh": 25
+  }
+}

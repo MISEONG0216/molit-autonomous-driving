@@ -1,0 +1,8 @@
+{
+  "target_y_ratio": 0.688892,
+  "frame_width": 1280,
+  "frame_height": 720,
+  "feature_version": "zebra_vehicle_edge_v2",
+  "description": "One-time zebra vehicle-side edge camera calibration at verified stopping position",
+  "saved_at_unix": 1790610917.1611671
+}

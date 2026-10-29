@@ -1,0 +1,31 @@
+{
+  "_note": "VIDEO-ONLY preliminary refinement for 2026-10-29 23:59 recording 1:30-1:43. WP220-320 based on older CSV; new CSV required to verify exact range. GPS offset, NOT painted-line detection. Test at <=10km/h before 57km/h.",
+  "enabled": true,
+  "zones": [
+    {
+      "start_wp": 220,
+      "end_wp": 320,
+      "right_offset_m": 0.45
+    }
+  ],
+  "_zone_example": {
+    "start_wp": 900,
+    "end_wp": 1100,
+    "right_offset_m": 0.45
+  },
+  "taper_m": 15.0,
+  "approach_m": 35.0,
+  "max_target_speed_kmh": 10.0,
+  "cross_track_warn_m": 0.65,
+  "cross_track_stop_m": 1.3,
+  "curve_sections": [
+    {
+      "start_wp": 235,
+      "full_start_wp": 251,
+      "full_end_wp": 279,
+      "end_wp": 302,
+      "extra_right_m": 0.15,
+      "max_target_speed_kmh": 8.0
+    }
+  ]
+}
