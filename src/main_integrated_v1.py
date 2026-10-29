@@ -50,6 +50,15 @@ from integration.dynamic_pedestrian_io import (
 from integration.gps_shadow_io import GpsShadowPose
 from integration.gps_shadow_lane import parse_lane_result
 from integration.shadow_tail_io import shadow_tail_steering
+from integration.lane_diagnostics import path_tracking_metrics
+from integration.beomsu_lane_guard import (
+    make_zones, make_tracking_path, offset_at_waypoint, TEST_SPEED_LIMIT_KMH,
+)
+from integration.roundabout_exit_offset import (
+    make_roundabout_exit_path,
+    offset_at_waypoint as roundabout_offset_at_waypoint,
+)
+from integration.roundabout_speed_cap import build_roundabout_speed_caps
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -108,6 +117,14 @@ def open_log():
         "follow_speed_cap_kmh", "follow_age_sec", "follow_vehicles",
         "gps_mode", "gps_shadow_sec", "lane_valid", "lane_confidence",
         "lane_steering_rad", "shadow_stop",
+        # All read-only CTE values refer to the OFFICIAL waypoint path.
+        "wall_time_local", "signed_cte_m", "abs_cte_m",
+        "heading_error_deg", "nearest_segment_wp",
+        "tracking_path_source",
+        # Optional route-specific fine-tuning diagnostics.
+        "beomsu_median_offset_m", "beomsu_roundabout_offset_m",
+        "beomsu_roundabout_speed_cap_kmh", "beomsu_roundabout_speed_zone",
+        "beomsu_tracking_dist_m",
     ])
     return path, f, w
 
@@ -151,6 +168,12 @@ def main():
                         help="apply graded highway-follow target speed caps")
     parser.add_argument("--max-speed", type=float, default=57.0,
                         help="normal <=57; explicitly request up to 120 on verified highway WPs")
+    parser.add_argument("--beomsu-first-right-m", type=float, default=0.0,
+                        help="Opt-in smooth right shift WP1480-1715, test 0.25m")
+    parser.add_argument("--beomsu-roundabout-right-m", type=float, default=0.0,
+                        help="Opt-in roundabout exit right shift WP1859-1902, test 0.20m")
+    parser.add_argument("--beomsu-roundabout-kmh", type=float, default=0.0,
+                        help="Opt-in roundabout speed hold WP1835-1892, test 12km/h")
     args = parser.parse_args()
 
     if args.gps_shadow and not args.traffic:
@@ -181,6 +204,19 @@ def main():
 
     # Importing V7 already applies the validated V7 monkey-patches.
     global_path = base.load_path(base.PATH_FILE)
+    # Mission indices, GPS nearest search, LiDAR and speed profiles use
+    # the original route. Only normal-GPS V7 tracking can use this copy.
+    try:
+        beomsu_zones = make_zones(len(global_path), args.beomsu_first_right_m)
+        tracking_path = make_tracking_path(global_path, beomsu_zones)
+        tracking_path = make_roundabout_exit_path(
+            tracking_path, args.beomsu_roundabout_right_m,
+        )
+        roundabout_speed_caps, roundabout_speed_zones = build_roundabout_speed_caps(
+            global_path, args.max_speed, args.beomsu_roundabout_kmh,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
     # Preserve the V7 <=57 baseline; >57 only in explicitly verified WPs
     # and ONLY when following perception/control is enabled.
     target_profile, radius_profile, full_profile = (
@@ -394,6 +430,12 @@ def main():
         print("[HIGHWAY WARNING] 120 km/h profile is EXPERIMENTAL; V7 steering not validated at this speed.")
         if follow_cfg.get("tollgate_exit_wp") is None:
             print("[HIGHWAY WARNING] tollgate WP unknown: SECOND section stays <=57 km/h.")
+    print(f"[BEOMSU] median RIGHT={args.beomsu_first_right_m:.2f}m WP1480-1715, "
+          f"max {TEST_SPEED_LIMIT_KMH:.0f} km/h only during active median offset")
+    print(f"[BEOMSU] roundabout RIGHT={args.beomsu_roundabout_right_m:.2f}m "
+          f"WP1859-1902; speed hold={args.beomsu_roundabout_kmh:.1f}km/h "
+          f"WP1835-1892 with preview brake")
+    print("[BEOMSU] All custom tuning OFF by default; V39 safety priority preserved")
     print(f"[LOG] {log_path}")
 
     try:
@@ -520,6 +562,27 @@ def main():
                 current_x,
                 current_y,
             )
+            try:
+                cte = path_tracking_metrics(
+                    global_path, nearest_index, current_x, current_y, yaw,
+                )
+            except ValueError:
+                cte = {
+                    "signed_cte_m": float("nan"),
+                    "abs_cte_m": float("nan"),
+                    "heading_error_deg": float("nan"),
+                    "nearest_segment_index": -1,
+                }
+            median_offset_m = offset_at_waypoint(nearest_index, beomsu_zones)
+            roundabout_offset_m = roundabout_offset_at_waypoint(
+                nearest_index, args.beomsu_roundabout_right_m,
+            )
+            rb_speed_cap_kmh = float(roundabout_speed_caps[nearest_index])
+            rb_zone = roundabout_speed_zones[nearest_index]
+            beomsu_tracking_dist_m = math.hypot(
+                tracking_path[nearest_index, 0] - current_x,
+                tracking_path[nearest_index, 1] - current_y,
+            )
             if merge_gate_tx is not None:
                 merge_gate_tx.sendto(
                     json.dumps({
@@ -581,7 +644,7 @@ def main():
             # The dead-reckoned pose is only for LiDAR path alignment and
             # rough mission gates, never for base steering.
             result = None if shadow_active else base.calculate_pure_pursuit(
-                global_path, nearest_index, current_x, current_y, yaw,
+                tracking_path, nearest_index, current_x, current_y, yaw,
             )
             if shadow_active:
                 base_steering = (
@@ -618,6 +681,15 @@ def main():
 
             target_speed_kmh = mission["target_speed_kmh"]
             steering = mission["steering"]
+
+            # Noncritical course tuning is never permitted to override the
+            # GPS-shadow camera/LiDAR safety controller or full STOP.
+            if not shadow_active and median_offset_m != 0.0:
+                target_speed_kmh = min(target_speed_kmh, TEST_SPEED_LIMIT_KMH)
+                mission["reasons"].append("beomsu_median_cap")
+            if not shadow_active and rb_zone != "OFF":
+                target_speed_kmh = min(target_speed_kmh, rb_speed_cap_kmh)
+                mission["reasons"].append("beomsu_roundabout_cap")
 
             # GRADED highway following, no arbitrary full brake on an image
             # score. Other mission STOPs retain precedence. Stale data means
@@ -928,6 +1000,23 @@ def main():
                 gps_mode, f"{shadow_sec:.3f}",
                 int(lane_fresh), f"{lane_result['confidence']:.3f}",
                 f"{lane_result['steering']:.4f}", int(shadow_stop),
+                datetime.fromtimestamp(now).astimezone().isoformat(
+                    timespec="milliseconds"
+                ),
+                f"{cte['signed_cte_m']:+.4f}",
+                f"{cte['abs_cte_m']:.4f}",
+                f"{cte['heading_error_deg']:+.3f}",
+                cte["nearest_segment_index"],
+                ("GPS_SHADOW_LIDAR" if shadow_active and static_active else
+                 "GPS_SHADOW_LANE" if shadow_active else
+                 "LOCAL_AVOIDANCE" if static_active else
+                 "BEOMSU_OFFSET" if (median_offset_m or roundabout_offset_m)
+                 else "GLOBAL_V7"),
+                f"{median_offset_m:+.3f}",
+                f"{roundabout_offset_m:+.3f}",
+                f"{rb_speed_cap_kmh:.3f}",
+                rb_zone,
+                f"{beomsu_tracking_dist_m:.3f}",
             ])
 
             print("\033[2J\033[H", end="")
@@ -943,6 +1032,11 @@ def main():
             )
             print(f"YAW         : {math.degrees(yaw):.2f} deg")
             print(f"NEAREST     : {nearest_index}")
+            print(f"GLOBAL CTE  : {cte['signed_cte_m']:+.3f}m "
+                  f"(+LEFT/-RIGHT) / heading={cte['heading_error_deg']:+.2f}deg")
+            print(f"BEOMSU      : median={median_offset_m:+.3f}m / "
+                  f"roundabout={roundabout_offset_m:+.3f}m / "
+                  f"roundabout speed cap={rb_speed_cap_kmh:.1f} ({rb_zone})")
             print(f"PATH DIST   : {nearest_distance:.3f} m")
             print(f"BASE TARGET : {base_target:.2f} km/h")
             print(f"FINAL TARGET: {target_speed_kmh:.2f} km/h")
