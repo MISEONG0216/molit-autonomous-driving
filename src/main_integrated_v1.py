@@ -45,6 +45,15 @@ from integration.lane_offset import (
     FULL_RIGHT_END_WP, RAMP_OUT_END_WP,
     MAX_TEST_OFFSET_M,
 )
+from integration.roundabout_exit_offset import (
+    make_roundabout_exit_path,
+    offset_at_waypoint as roundabout_offset_at_waypoint,
+    RAMP_IN_BEGIN_WP as ROUNDABOUT_START_WP,
+    FULL_BEGIN_WP as ROUNDABOUT_FULL_START_WP,
+    FULL_END_WP as ROUNDABOUT_FULL_END_WP,
+    RAMP_OUT_END_WP as ROUNDABOUT_END_WP,
+    MAX_RIGHT_OFFSET_M as MAX_ROUNDABOUT_OFFSET_M,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -97,6 +106,7 @@ def open_log():
         "static_latch_state", "traffic_green_bypass_620",
         "traffic_green_count_620",
         "lane_right_offset_m", "tracking_path_dist_m",
+        "roundabout_right_offset_m",
     ])
     return path, f, w
 
@@ -134,6 +144,11 @@ def main():
         help="experimental rightward PP-path shift in WP1480-1715; "
              "0=unchanged V22 (test 0.25 m first)",
     )
+    parser.add_argument(
+        "--roundabout-offset-m", type=float, default=0.0,
+        help="opt-in local RIGHT shift near roundabout exit WP1859-1902; "
+             "start with 0.25m, 0=original WP path",
+    )
     args = parser.parse_args()
 
     if args.merge_control and not args.merge:
@@ -144,6 +159,8 @@ def main():
         parser.error("--max-speed must be >0 and <=57")
     if not math.isfinite(args.lane_offset_m) or not (0.0 <= args.lane_offset_m <= MAX_TEST_OFFSET_M):
         parser.error(f"--lane-offset-m must be between 0 and {MAX_TEST_OFFSET_M:.2f}")
+    if not math.isfinite(args.roundabout_offset_m) or not (0.0 <= args.roundabout_offset_m <= MAX_ROUNDABOUT_OFFSET_M):
+        parser.error(f"--roundabout-offset-m must be between 0 and {MAX_ROUNDABOUT_OFFSET_M:.2f}")
 
     network = load_json(NETWORK_FILE)
     missions = load_json(MISSION_FILE)
@@ -157,6 +174,9 @@ def main():
     # Official path remains the source for index/mission/speed/worker logic.
     # Only Pure Pursuit steering uses this opt-in right-shifted copy.
     tracking_path = make_right_offset_path(global_path, args.lane_offset_m)
+    tracking_path = make_roundabout_exit_path(
+        tracking_path, args.roundabout_offset_m,
+    )
 
     gps_receiver = Receiver(
         network["gps"]["bind_ip"],
@@ -252,6 +272,12 @@ def main():
         f"hold {FULL_RIGHT_BEGIN_WP}-{FULL_RIGHT_END_WP}, "
         f"release to {RAMP_OUT_END_WP}; "
         "0.00=original V22"
+    )
+    print(
+        f"[ROUNDABOUT EXIT OFFSET] RIGHT {args.roundabout_offset_m:.2f}m max; "
+        f"ramp {ROUNDABOUT_START_WP}-{ROUNDABOUT_FULL_START_WP}, "
+        f"hold {ROUNDABOUT_FULL_START_WP}-{ROUNDABOUT_FULL_END_WP}, "
+        f"release to {ROUNDABOUT_END_WP}"
     )
     print("[CTRL] single EgoCtrlCmd sender / ctrl_mode=2 / cmd_type=1")
     print(f"[MODE] {'DRIVE' if args.drive else 'DRY-RUN'}")
@@ -368,6 +394,9 @@ def main():
             )
             current_lane_right_offset_m = offset_at_waypoint(
                 nearest_index, args.lane_offset_m,
+            )
+            current_roundabout_right_offset_m = roundabout_offset_at_waypoint(
+                nearest_index, args.roundabout_offset_m,
             )
 
             result = base.calculate_pure_pursuit(
@@ -569,6 +598,7 @@ def main():
                 mission["second_green_count"],
                 f"{current_lane_right_offset_m:.3f}",
                 f"{tracking_distance:.3f}",
+                f"{current_roundabout_right_offset_m:.3f}",
             ])
 
             print("\033[2J\033[H", end="")
@@ -585,6 +615,11 @@ def main():
             if args.lane_offset_m > 0.0:
                 print(
                     f"LANE OFFSET : RIGHT {current_lane_right_offset_m:.3f} m "
+                    f"/ TRACK DIST {tracking_distance:.3f} m"
+                )
+            if args.roundabout_offset_m > 0.0:
+                print(
+                    f"ROUNDABOUT  : RIGHT {current_roundabout_right_offset_m:.3f} m "
                     f"/ TRACK DIST {tracking_distance:.3f} m"
                 )
             print(f"BASE TARGET : {base_target:.2f} km/h")
