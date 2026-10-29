@@ -164,7 +164,9 @@
     "confidence_pixel_scale": 700,
     "steer_gain_rad": 0.2,
     "max_steer_rad": 0.22,
-    "notes": "Based on provided morai_lanenet_viz.py HSV/Canny/BEV/EMA, not actual TensorFlow LaneNet. On GPS missing/unchanged for >1.0s while moving, camera lane steer is PRIMARY. Bounded IMU+speed dead reckoning is only for original LiDAR planner alignment and approximate WP gates, never for primary steering. Never continue blindly: no initial fix, stale lane, invalid lane, IMU/status failure, pose gap>0.8s, >12s or >35m blackout or >7m path offset => full stop. Full-vehicle dynamic traffic detection is NOT covered; existing pedestrian YOLO/MiDaS only."
+    "notes": "Based on provided morai_lanenet_viz.py HSV/Canny/BEV/EMA, not actual TensorFlow LaneNet. On GPS missing/unchanged for >1.0s while moving, camera lane steer is PRIMARY. Bounded IMU+speed dead reckoning is only for original LiDAR planner alignment and approximate WP gates, never for primary steering. Never continue blindly: no initial fix, stale lane, invalid lane, IMU/status failure, pose gap>0.8s, >12s or >35m blackout or >7m path offset => full stop. Full-vehicle dynamic traffic detection is NOT covered; existing pedestrian YOLO/MiDaS only.",
+    "allow_sensor_guided_extended": true,
+    "sensor_guided_extended_note": "No 12s wall-clock cutoff only when fresh camera lane and LiDAR are independently required by main; drifting XY is never allowed to set Pure Pursuit steering. Missing lane or LiDAR => stop. Offline vision-only mode is not verified for arbitrary tunnel length."
   },
   "gps_shadow_wall_guard": {
     "check_ahead_m": 18,
@@ -187,5 +189,25 @@
     "emergency_stop_ahead_m": 6,
     "emergency_min_points": 5,
     "max_verified_scan_age_sec": 2.4
+  },
+  "gps_shadow_ego_planner": {
+    "horizon_m": 15,
+    "shift_end_m": 7,
+    "return_start_m": 10,
+    "offset_m": 1.6,
+    "vehicle_half_width_m": 0.9,
+    "margin_m": 0.45,
+    "min_points": 80,
+    "min_side_points": 8,
+    "z_min": -1.45,
+    "z_max": 1.25,
+    "emergency_forward_m": 2.5,
+    "obstacle_min_forward_m": 3,
+    "obstacle_max_forward_m": 12,
+    "obstacle_point_threshold": 5,
+    "allowed_points": 0,
+    "avoidance_speed_kmh": 5,
+    "max_result_age_sec": 1.6,
+    "notes": "Vehicle-frame current LiDAR wall+obstacle clearance. Detour is chosen ONCE, locked, and remaining polyline rechecked; global path not used to generate shadow detour. All ranges are uncalibrated trial values; rejection STOP is expected if walls or observed points obstruct either side."
   }
 }
