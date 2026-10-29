@@ -38,9 +38,14 @@ class MergeRoundaboutV28Test(unittest.TestCase):
             mode = merge_camera_mode(wp, self.cfg)
             self.assertEqual(mode, "post_merge")
             self.assertEqual(active_merge_cameras(mode), ("left",))
-        for wp in (1769, 1821, 2479, 2561, 3049, 3191):
-            self.assertEqual(merge_camera_mode(wp, self.cfg), "off")
-            self.assertEqual(active_merge_cameras("off"), ())
+        # V30: perception is pre-armed 25 WPs before zone boundaries.
+        for wp, expected in ((1769, "roundabout_prearm"),
+                             (2479, "highway_prearm"),
+                             (3049, "highway_prearm"),
+                             (1821, "off"), (2561, "off"),
+                             (3191, "off")):
+            self.assertEqual(merge_camera_mode(wp, self.cfg), expected)
+        self.assertEqual(active_merge_cameras("off"), ())
 
     def test_far_boxes_are_less_sensitive_and_near_unchanged(self):
         self.assertEqual(self.cfg["risk_stop_threshold"], 0.6)
