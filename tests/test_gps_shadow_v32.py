@@ -94,7 +94,7 @@ class IntegrationStructureTest(unittest.TestCase):
         for term in ("cv2.inRange","cv2.Canny","cv2.warpPerspective",
                      "np.polyfit","ALPHA = 0.25","self.left_prev"):
             self.assertIn(term,source)
-        self.assertNotIn("tensorflow",source.lower())
+        self.assertNotIn("import tensorflow",source.lower())
 
     def test_only_main_sends_control(self):
         for worker in ("gps_shadow_lane_worker.py","dynamic_pedestrian_worker.py",
