@@ -39,6 +39,12 @@ from integration.static_avoidance_io import (
     configured_avoidance_speed_kmh,
 )
 from integration.static_zone import load_static_zones, in_static_zone
+from integration.lane_offset import (
+    make_right_offset_path, offset_at_waypoint,
+    RAMP_IN_BEGIN_WP, FULL_RIGHT_BEGIN_WP,
+    FULL_RIGHT_END_WP, RAMP_OUT_END_WP,
+    MAX_TEST_OFFSET_M,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -90,6 +96,7 @@ def open_log():
         "static_in_zone", "static_route_locked", "static_worker_wp",
         "static_latch_state", "traffic_green_bypass_620",
         "traffic_green_count_620",
+        "lane_right_offset_m", "tracking_path_dist_m",
     ])
     return path, f, w
 
@@ -122,6 +129,11 @@ def main():
     parser.add_argument("--static-control", action="store_true",
                         help="static avoidance in configured WP zones; fail-stop while active")
     parser.add_argument("--max-speed", type=float, default=57.0)
+    parser.add_argument(
+        "--lane-offset-m", type=float, default=0.0,
+        help="experimental rightward PP-path shift in WP1480-1715; "
+             "0=unchanged V22 (test 0.25 m first)",
+    )
     args = parser.parse_args()
 
     if args.merge_control and not args.merge:
@@ -130,6 +142,8 @@ def main():
         parser.error("--static-control requires --static")
     if args.max_speed <= 0.0 or args.max_speed > 57.0:
         parser.error("--max-speed must be >0 and <=57")
+    if not math.isfinite(args.lane_offset_m) or not (0.0 <= args.lane_offset_m <= MAX_TEST_OFFSET_M):
+        parser.error(f"--lane-offset-m must be between 0 and {MAX_TEST_OFFSET_M:.2f}")
 
     network = load_json(NETWORK_FILE)
     missions = load_json(MISSION_FILE)
@@ -140,6 +154,9 @@ def main():
     target_profile, radius_profile, full_profile = (
         profile_test.build_test_profile(global_path, args.max_speed)
     )
+    # Official path remains the source for index/mission/speed/worker logic.
+    # Only Pure Pursuit steering uses this opt-in right-shifted copy.
+    tracking_path = make_right_offset_path(global_path, args.lane_offset_m)
 
     gps_receiver = Receiver(
         network["gps"]["bind_ip"],
@@ -229,6 +246,13 @@ def main():
     print(" V7 + TRAFFIC + MERGE INTEGRATION V1")
     print("====================================================")
     print("[BASE] validated V7 import chain")
+    print(
+        f"[LANE OFFSET] RIGHT {args.lane_offset_m:.2f}m max; "
+        f"ramp {RAMP_IN_BEGIN_WP}-{FULL_RIGHT_BEGIN_WP}, "
+        f"hold {FULL_RIGHT_BEGIN_WP}-{FULL_RIGHT_END_WP}, "
+        f"release to {RAMP_OUT_END_WP}; "
+        "0.00=original V22"
+    )
     print("[CTRL] single EgoCtrlCmd sender / ctrl_mode=2 / cmd_type=1")
     print(f"[MODE] {'DRIVE' if args.drive else 'DRY-RUN'}")
     print(f"[TRAFFIC] {'ON' if args.traffic else 'OFF'} / stops={stop_indices}")
@@ -338,9 +362,16 @@ def main():
                 nearest_x - current_x,
                 nearest_y - current_y,
             )
+            tracking_distance = math.hypot(
+                tracking_path[nearest_index, 0] - current_x,
+                tracking_path[nearest_index, 1] - current_y,
+            )
+            current_lane_right_offset_m = offset_at_waypoint(
+                nearest_index, args.lane_offset_m,
+            )
 
             result = base.calculate_pure_pursuit(
-                global_path,
+                tracking_path,
                 nearest_index,
                 current_x,
                 current_y,
@@ -536,6 +567,8 @@ def main():
                 static_plan["latch_state"] if static_fresh else "",
                 int(mission["second_green_bypass"]),
                 mission["second_green_count"],
+                f"{current_lane_right_offset_m:.3f}",
+                f"{tracking_distance:.3f}",
             ])
 
             print("\033[2J\033[H", end="")
@@ -549,6 +582,11 @@ def main():
             print(f"YAW         : {math.degrees(yaw):.2f} deg")
             print(f"NEAREST     : {nearest_index}")
             print(f"PATH DIST   : {nearest_distance:.3f} m")
+            if args.lane_offset_m > 0.0:
+                print(
+                    f"LANE OFFSET : RIGHT {current_lane_right_offset_m:.3f} m "
+                    f"/ TRACK DIST {tracking_distance:.3f} m"
+                )
             print(f"BASE TARGET : {base_target:.2f} km/h")
             print(f"FINAL TARGET: {target_speed_kmh:.2f} km/h")
             print(f"COMP SPEED  : {current_speed_kmh:.2f} km/h")
