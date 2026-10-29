@@ -68,6 +68,14 @@ from integration.roundabout_speed_cap import (
     HOLD_END_WP as ROUNDABOUT_SLOW_END_WP,
     MIN_TEST_HOLD_KMH, MAX_TEST_HOLD_KMH,
 )
+from integration.first_corner_early_left import (
+    add_early_left_steering,
+    RAMP_BEGIN_WP as FIRST_LEFT_BEGIN_WP,
+    FULL_BEGIN_WP as FIRST_LEFT_FULL_START_WP,
+    FULL_END_WP as FIRST_LEFT_FULL_END_WP,
+    RAMP_END_WP as FIRST_LEFT_END_WP,
+    MAX_EXTRA_LEFT_DEG as MAX_FIRST_LEFT_DEG,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -125,6 +133,7 @@ def open_log():
         "roundabout_preassist_steering_deg",
         "roundabout_speed_zone", "roundabout_speed_cap_kmh",
         "roundabout_speed_brake_active",
+        "first_corner_early_left_deg", "first_corner_preassist_steering_deg",
     ])
     return path, f, w
 
@@ -177,6 +186,11 @@ def main():
         help="roundabout speed hold from WP1835 to WP1892, distance-based "
              "braking preview + progressive release; 0=OFF, test 12",
     )
+    parser.add_argument(
+        "--first-corner-early-left-deg", type=float, default=0.0,
+        help="optional limited early LEFT steering on first corner WP140-163; "
+             "0=OFF, try 2deg first",
+    )
     args = parser.parse_args()
 
     if args.merge_control and not args.merge:
@@ -196,6 +210,11 @@ def main():
         not MIN_TEST_HOLD_KMH <= args.roundabout_slow_kmh <= MAX_TEST_HOLD_KMH
     ):
         parser.error(f"--roundabout-slow-kmh must be 0 (OFF) or {MIN_TEST_HOLD_KMH:.0f}..{MAX_TEST_HOLD_KMH:.0f}")
+
+    if not math.isfinite(args.first_corner_early_left_deg) or not (
+        0.0 <= args.first_corner_early_left_deg <= MAX_FIRST_LEFT_DEG
+    ):
+        parser.error(f"--first-corner-early-left-deg must be 0..{MAX_FIRST_LEFT_DEG:.1f}")
 
     network = load_json(NETWORK_FILE)
     missions = load_json(MISSION_FILE)
@@ -327,6 +346,12 @@ def main():
         f"[ROUNDABOUT SLOW] target_hold={args.roundabout_slow_kmh:.1f}km/h "
         f"WP{ROUNDABOUT_SLOW_BEGIN_WP}-{ROUNDABOUT_SLOW_END_WP}; "
         "prebrake by route distance, then progressive release; 0=OFF"
+    )
+    print(
+        f"[FIRST CORNER EARLY LEFT] +{args.first_corner_early_left_deg:.1f}deg max; "
+        f"ramp WP{FIRST_LEFT_BEGIN_WP}-{FIRST_LEFT_FULL_START_WP}, "
+        f"hold WP{FIRST_LEFT_FULL_START_WP}-{FIRST_LEFT_FULL_END_WP}, "
+        f"release by WP{FIRST_LEFT_END_WP}; 0=unchanged V22"
     )
     print("[CTRL] single EgoCtrlCmd sender / ctrl_mode=2 / cmd_type=1")
     print(f"[MODE] {'DRIVE' if args.drive else 'DRY-RUN'}")
@@ -553,6 +578,24 @@ def main():
                 if early_right_applied_deg > 0.001:
                     mission["reasons"].append("roundabout_early_right_steer")
 
+            # First LEFT corner: a small early steering pulse only.
+            # Do not override LiDAR avoidance, traffic STOP, or merge STOP.
+            first_left_preassist_steering = steering
+            first_left_applied_deg = 0.0
+            if (
+                args.first_corner_early_left_deg > 0.0
+                and result is not None
+                and not static_active
+                and not static_stop
+                and not mission["traffic_full_brake"]
+                and not (args.merge_control and mission["merge_stop"])
+            ):
+                steering, first_left_applied_deg = add_early_left_steering(
+                    steering, nearest_index, args.first_corner_early_left_deg,
+                )
+                if first_left_applied_deg > 0.001:
+                    mission["reasons"].append("first_corner_early_left_steer")
+
             # Only the speed request changes; official waypoints and
             # V7 steering remain untouched by roundabout speed control.
             roundabout_speed_cap_kmh = float(
@@ -706,6 +749,8 @@ def main():
                 roundabout_speed_zone,
                 f"{roundabout_speed_cap_kmh:.3f}",
                 int(control_zone == "ROUNDABOUT_PREBRAKE"),
+                f"{first_left_applied_deg:.3f}",
+                f"{math.degrees(first_left_preassist_steering):.3f}",
             ])
 
             print("\033[2J\033[H", end="")
@@ -739,6 +784,11 @@ def main():
                     f"RB SPEED CAP: {roundabout_speed_cap_kmh:.2f} km/h "
                     f"/ {roundabout_speed_zone} "
                     f"/ hold WP{ROUNDABOUT_SLOW_BEGIN_WP}-{ROUNDABOUT_SLOW_END_WP}"
+                )
+            if args.first_corner_early_left_deg > 0.0:
+                print(
+                    f"FIRST LEFT  : +{first_left_applied_deg:.2f} deg "
+                    f"/ V7 steer {math.degrees(first_left_preassist_steering):+.2f} deg"
                 )
             print(f"BASE TARGET : {base_target:.2f} km/h")
             print(f"FINAL TARGET: {target_speed_kmh:.2f} km/h")
