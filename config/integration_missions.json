@@ -143,7 +143,7 @@
   },
   "gps_shadow": {
     "enabled_by_launch": true,
-    "stale_moving_sec": 1.7,
+    "stale_moving_sec": 1,
     "moving_threshold_kmh": 2,
     "gps_change_threshold_m": 0.08,
     "gps_recovery_samples": 3,
@@ -164,6 +164,6 @@
     "confidence_pixel_scale": 700,
     "steer_gain_rad": 0.2,
     "max_steer_rad": 0.22,
-    "notes": "Based on provided morai_lanenet_viz.py HSV/Canny/BEV/EMA, not actual TensorFlow LaneNet. On GPS missing/unchanged while moving, camera lane steer is PRIMARY. Bounded IMU+speed dead reckoning is only for original LiDAR planner alignment and approximate WP gates, never for primary steering. Never continue blindly: no initial fix, stale lane, invalid lane, IMU/status failure, pose gap>0.8s, >12s or >35m blackout or >7m path offset => full stop. Full-vehicle dynamic traffic detection is NOT covered; existing pedestrian YOLO/MiDaS only."
+    "notes": "Based on provided morai_lanenet_viz.py HSV/Canny/BEV/EMA, not actual TensorFlow LaneNet. On GPS missing/unchanged for >1.0s while moving, camera lane steer is PRIMARY. Bounded IMU+speed dead reckoning is only for original LiDAR planner alignment and approximate WP gates, never for primary steering. Never continue blindly: no initial fix, stale lane, invalid lane, IMU/status failure, pose gap>0.8s, >12s or >35m blackout or >7m path offset => full stop. Full-vehicle dynamic traffic detection is NOT covered; existing pedestrian YOLO/MiDaS only."
   }
 }
