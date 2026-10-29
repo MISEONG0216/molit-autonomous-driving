@@ -188,11 +188,18 @@ def main():
         )
 
     merge_rx = None
+    merge_gate_tx = None
+    merge_gate_target = None
     if args.merge:
         merge_rx = LatestUdpTextReceiver(
             network["merge_result"]["bind_ip"],
             int(network["merge_result"]["port"]),
         )
+        merge_gate_cfg = network["merge_gate"]
+        if merge_gate_cfg["bind_ip"] != "127.0.0.1":
+            raise RuntimeError("Merge waypoint gate must use localhost")
+        merge_gate_target = ("127.0.0.1", int(merge_gate_cfg["port"]))
+        merge_gate_tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
     # Only this main loop transmits EgoCtrlCmd. The LiDAR worker receives a
     # localhost pose feed and returns a plan/status; it never owns GPS/IMU.
@@ -267,6 +274,8 @@ def main():
     pedestrian_updated_at = 0.0
     pedestrian_was_in_zone = False
     pedestrian_zone_entered_at = 0.0
+    merge_was_in_zone = False
+    merge_zone_entered_at = 0.0
 
     print("====================================================")
     print(" V7 + TRAFFIC + MERGE INTEGRATION V1")
@@ -387,6 +396,22 @@ def main():
                 current_x,
                 current_y,
             )
+            if merge_gate_tx is not None:
+                merge_gate_tx.sendto(
+                    json.dumps({
+                        "waypoint_index": nearest_index,
+                        "merge_all": bool(args.merge_all),
+                    }).encode("ascii"),
+                    merge_gate_target,
+                )
+            merge_cfg = missions.get("merge", {})
+            merge_ranges = merge_cfg.get("zones", []) + merge_cfg.get("roundabout_zones", [])
+            merge_in_zone = bool(args.merge_all) or any(
+                start <= nearest_index <= end for start, end in merge_ranges
+            )
+            if merge_in_zone and not merge_was_in_zone:
+                merge_zone_entered_at = time.time()
+            merge_was_in_zone = merge_in_zone
             pedestrian_in_zone = in_dynamic_zone(nearest_index, pedestrian_zones)
             if pedestrian_gate_tx is not None:
                 pedestrian_gate_tx.sendto(
@@ -428,8 +453,9 @@ def main():
                 traffic_enabled=args.traffic,
                 merge_enabled=args.merge,
                 merge_control_enabled=args.merge_control,
-                merge_result=merge,
-                merge_updated_at=merge_updated_at,
+                # Ignore an old MERGE_ACCEPT from before this zone entry.
+                merge_result=(merge if merge_updated_at >= merge_zone_entered_at else parse_merge_message(None)),
+                merge_updated_at=(merge_updated_at if merge_updated_at >= merge_zone_entered_at else 0.0),
                 merge_all=args.merge_all,
                 now=now,
             )
@@ -753,6 +779,8 @@ def main():
             traffic_rx.close()
         if merge_rx is not None:
             merge_rx.close()
+        if merge_gate_tx is not None:
+            merge_gate_tx.close()
         if static_rx is not None:
             static_rx.close()
         if pose_tx is not None:
