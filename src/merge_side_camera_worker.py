@@ -13,7 +13,10 @@ import time
 from pathlib import Path
 
 import numpy as np
-from integration.merge_side_io import JpegAssembler, in_merge_zone, vehicle_risk, format_result
+from integration.merge_side_io import (
+    JpegAssembler, merge_camera_mode, active_merge_cameras,
+    vehicle_risk, attenuate_distant_risk, format_result,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 CARS = [2, 3, 5, 7]  # COCO: car, motorcycle, bus, truck
@@ -90,7 +93,7 @@ def main():
         previous_area = {side: 0.0 for side in cameras}
         last_inferred = {side: 0.0 for side in cameras}
         latest_wp, gate_all, last_gate = None, False, 0.0
-        previous_enabled = False
+        previous_mode = 'off'
         last_state, last_log = None, 0.0
 
         if args.show:
@@ -114,20 +117,42 @@ def main():
                 except (ValueError, UnicodeError, TypeError, AttributeError):
                     pass
 
-            enabled = (latest_wp is not None
-                       and time.monotonic() - last_gate <= 1.0
-                       and in_merge_zone(latest_wp, cfg, gate_all))
-            if enabled != previous_enabled:
-                print(f"[MERGE ZONE] {'ON' if enabled else 'OFF'} WP={latest_wp}")
+            gate_fresh = (latest_wp is not None
+                          and time.monotonic() - last_gate <= 1.0)
+            mode = (merge_camera_mode(latest_wp, cfg, gate_all)
+                    if gate_fresh else "off")
+            active_sides = active_merge_cameras(mode)
+            enabled = bool(active_sides)
+            if mode != previous_mode:
+                print(f"[MERGE ZONE] {mode.upper()} WP={latest_wp} "
+                      f"active={active_sides} rear_left={'ON' if 'left_rear' in active_sides else 'OFF'}")
+                # Never inherit previous-zone camera evidence or JPEG fragments.
                 previous_area = {side: 0.0 for side in cameras}
                 risk = {side: 1.0 for side in cameras}
                 last_inferred = {side: 0.0 for side in cameras}
-                previous_enabled = enabled
+                for assembler in assemblers.values():
+                    assembler.data.clear()
+                if mode == "roundabout":
+                    risk["left_rear"] = 0.0
+                    frames.pop("left_rear", None)
+                previous_mode = mode
 
             readable, _, _ = select.select(list(cameras.values()), [], [], 0.04)
             new_inference = False
             for side, cam in cameras.items():
                 if cam not in readable:
+                    continue
+                if side not in active_sides and side == "left_rear":
+                    # In the roundabout rear-left is completely excluded from
+                    # inference and risk. Drain traffic to prevent stale frames
+                    # being processed when the highway mode starts later.
+                    for _ in range(192):
+                        try:
+                            cam.recvfrom(65535)
+                        except BlockingIOError:
+                            break
+                    if mode == "roundabout":
+                        frames.pop(side, None)
                     continue
                 jpeg = take_latest(cam, assemblers[side])
                 if jpeg is None:
@@ -152,6 +177,10 @@ def main():
                         x1, y1, x2, y2, width, height,
                         previous_area_ratio=previous_area[side],
                     )
+                    if mode == "highway_merge":
+                        # Preserve original V23 risk near the vehicle, soften
+                        # distant/small boxes that often belong to other lanes.
+                        current = attenuate_distant_risk(current, area, cfg)
                     biggest_area = max(biggest_area, area)
                     maximum = max(maximum, current)
                     if args.show:
@@ -169,7 +198,10 @@ def main():
                 for side in cameras:
                     frame = frames.get(side)
                     frame = frame.copy() if frame is not None else np.zeros((480,640,3),np.uint8)
-                    label = f"WP={latest_wp} ZONE={'ON' if enabled else 'OFF'} risk={risk[side]:.2f}"
+                    if mode == "roundabout" and side == "left_rear":
+                        label = f"WP={latest_wp} REAR LEFT PAUSED (ROUNDABOUT)"
+                    else:
+                        label = f"WP={latest_wp} MODE={mode} risk={risk[side]:.2f}"
                     cv2.putText(frame,label,(8,30),cv2.FONT_HERSHEY_SIMPLEX,0.60,(0,255,255),2)
                     cv2.imshow("MORAI MERGE " + side.upper(),frame)
                 if cv2.waitKey(1) & 0xff in (ord("q"),27):
@@ -178,17 +210,21 @@ def main():
             if not enabled:
                 continue
             now = time.monotonic()
-            # Both cameras must have *recent decoded AND inferred* frames.
+            # Roundabout: ONLY left camera can veto, rear-left is disabled.
+            # Highway merge: both cameras must have fresh inference.
             ready = all(
                 last_inferred[side] > 0.0 and now-last_inferred[side] < 1.5
-                for side in cameras
+                for side in active_sides
             )
             if ready:
-                left, rear = risk["left"], risk["left_rear"]
+                left = risk["left"]
+                rear = risk["left_rear"] if "left_rear" in active_sides else 0.0
                 decision = ("MERGE_REJECT" if max(left,rear) >= cfg["risk_stop_threshold"]
                             else "MERGE_ACCEPT")
             else:
-                left, rear, decision = 1.0, 1.0, "MERGE_REJECT"
+                left = 1.0
+                rear = 1.0 if "left_rear" in active_sides else 0.0
+                decision = "MERGE_REJECT"
 
             # Only a new inference can confirm a safe gap. Never turn
             # repeated timer ticks into three fake accept confirmations.
@@ -196,8 +232,8 @@ def main():
                 publisher.sendto(format_result(left,rear,decision),target)
             state = (decision, ready)
             if state != last_state or now-last_log >= 3.0:
-                print(f"[MERGE] WP={latest_wp} left={left:.2f} left_rear={rear:.2f}"
-                      f" ready={ready} => {decision}")
+                print(f"[MERGE] WP={latest_wp} mode={mode} left={left:.2f} "
+                      f"left_rear={rear:.2f} ready={ready} => {decision}")
                 last_state, last_log = state, now
     except KeyboardInterrupt:
         print("[MERGE] Interrupted")
