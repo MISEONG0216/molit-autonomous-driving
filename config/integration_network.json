@@ -46,5 +46,9 @@
   "pedestrian_gate": {
     "bind_ip": "127.0.0.1",
     "port": 9306
+  },
+  "merge_gate": {
+    "bind_ip": "127.0.0.1",
+    "port": 9307
   }
 }
