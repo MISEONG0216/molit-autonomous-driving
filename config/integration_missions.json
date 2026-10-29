@@ -7,6 +7,12 @@
     "approach_brake_min_cmd": 0.14,
     "approach_brake_gain": 0.028,
     "approach_brake_max_cmd": 0.5,
+    "red_creep_speed_kmh": 5,
+    "red_creep_targets_wp": {
+      "414": 410,
+      "620": 610,
+      "1224": 1215
+    },
     "stop_overrides": {
       "620": {
         "approach_distance_m": 65,
