@@ -85,6 +85,15 @@ from integration.first_corner_left_offset import (
     RAMP_OUT_END_WP as FIRST_OFFSET_END_WP,
     MAX_LEFT_TEST_OFFSET_M as MAX_FIRST_CORNER_OFFSET_M,
 )
+from integration.first_corner_exit_right_offset import (
+    make_first_corner_exit_right_path,
+    offset_at_waypoint as first_corner_exit_right_offset_at_waypoint,
+    RAMP_IN_START_WP as FIRST_EXIT_RIGHT_BEGIN_WP,
+    FULL_RIGHT_START_WP as FIRST_EXIT_RIGHT_FULL_BEGIN_WP,
+    FULL_RIGHT_END_WP as FIRST_EXIT_RIGHT_FULL_END_WP,
+    RAMP_OUT_END_WP as FIRST_EXIT_RIGHT_END_WP,
+    MAX_RIGHT_TEST_OFFSET_M as MAX_FIRST_EXIT_RIGHT_OFFSET_M,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -144,6 +153,7 @@ def open_log():
         "roundabout_speed_brake_active",
         "first_corner_early_left_deg", "first_corner_preassist_steering_deg",
         "first_corner_left_offset_m",
+        "first_corner_exit_right_offset_m",
     ])
     return path, f, w
 
@@ -206,6 +216,11 @@ def main():
         help="opt-in smooth LEFT shift of Pure Pursuit tracking path WP125..215; "
              "0=OFF, try 0.30m (no extra steering pulse)",
     )
+    parser.add_argument(
+        "--first-corner-exit-right-offset-m", type=float, default=0.0,
+        help="optional smooth RIGHT tracking path after first corner; "
+             "WP195..238 only, 0=OFF, initial test 0.20m",
+    )
     args = parser.parse_args()
 
     if args.merge_control and not args.merge:
@@ -238,6 +253,14 @@ def main():
             f"--first-corner-left-offset-m must be 0..{MAX_FIRST_CORNER_OFFSET_M:.2f}"
         )
 
+    if not math.isfinite(args.first_corner_exit_right_offset_m) or not (
+        0.0 <= args.first_corner_exit_right_offset_m <= MAX_FIRST_EXIT_RIGHT_OFFSET_M
+    ):
+        parser.error(
+            f"--first-corner-exit-right-offset-m must be "
+            f"0..{MAX_FIRST_EXIT_RIGHT_OFFSET_M:.2f}"
+        )
+
     network = load_json(NETWORK_FILE)
     missions = load_json(MISSION_FILE)
     stop_indices = load_stop_indices(STOP_INDEX_FILE)
@@ -254,6 +277,11 @@ def main():
     # Official waypoints remain unchanged for nearest WP/missions/speed.
     tracking_path = make_first_corner_left_path(
         tracking_path, args.first_corner_left_offset_m,
+    )
+    # Exit lane settling: blend the first-corner LEFT path into a short
+    # RIGHT bias after WP195. No change to the official route or WP indices.
+    tracking_path = make_first_corner_exit_right_path(
+        tracking_path, args.first_corner_exit_right_offset_m,
     )
     tracking_path = make_roundabout_exit_path(
         tracking_path, args.roundabout_offset_m,
@@ -386,6 +414,12 @@ def main():
         f"hold WP{FIRST_OFFSET_FULL_BEGIN_WP}-{FIRST_OFFSET_FULL_END_WP}, "
         f"release WP{FIRST_OFFSET_END_WP}; zero=original path"
     )
+    print(
+        f"[FIRST CORNER EXIT RIGHT] max={args.first_corner_exit_right_offset_m:.2f}m; "
+        f"ramp WP{FIRST_EXIT_RIGHT_BEGIN_WP}-{FIRST_EXIT_RIGHT_FULL_BEGIN_WP}, "
+        f"hold WP{FIRST_EXIT_RIGHT_FULL_BEGIN_WP}-{FIRST_EXIT_RIGHT_FULL_END_WP}, "
+        f"release by WP{FIRST_EXIT_RIGHT_END_WP}; 0=OFF"
+    )
     print("[CTRL] single EgoCtrlCmd sender / ctrl_mode=2 / cmd_type=1")
     print(f"[MODE] {'DRIVE' if args.drive else 'DRY-RUN'}")
     print(f"[TRAFFIC] {'ON' if args.traffic else 'OFF'} / stops={stop_indices}")
@@ -507,6 +541,11 @@ def main():
             )
             current_first_corner_left_offset_m = first_corner_left_offset_at_waypoint(
                 nearest_index, args.first_corner_left_offset_m,
+            )
+            current_first_corner_exit_right_offset_m = (
+                first_corner_exit_right_offset_at_waypoint(
+                    nearest_index, args.first_corner_exit_right_offset_m,
+                )
             )
 
             result = base.calculate_pure_pursuit(
@@ -788,6 +827,7 @@ def main():
                 f"{first_left_applied_deg:.3f}",
                 f"{math.degrees(first_left_preassist_steering):.3f}",
                 f"{current_first_corner_left_offset_m:.3f}",
+                f"{current_first_corner_exit_right_offset_m:.3f}",
             ])
 
             print("\033[2J\033[H", end="")
@@ -814,6 +854,11 @@ def main():
             if args.first_corner_left_offset_m > 0.0:
                 print(
                     f"FIRST PATH  : LEFT {current_first_corner_left_offset_m:.3f} m "
+                    f"/ TRACK DIST {tracking_distance:.3f} m"
+                )
+            if args.first_corner_exit_right_offset_m > 0.0:
+                print(
+                    f"FIRST EXIT  : RIGHT {current_first_corner_exit_right_offset_m:.3f} m "
                     f"/ TRACK DIST {tracking_distance:.3f} m"
                 )
             if args.roundabout_early_right_deg > 0.0:
