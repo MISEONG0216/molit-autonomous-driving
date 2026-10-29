@@ -87,7 +87,7 @@ class GpsShadowPose:
             if changed:
                 self.pose = raw
             self.last_mode = "GPS"
-            return self.last_mode, self.pose, age
+            return self.last_mode, self.pose, 0.0
 
         if not self.shadow:
             self.shadow = True
