@@ -34,7 +34,7 @@ from static_obstacle_planner import StaticObstaclePlanner, PlanResult, nearest_i
 from integration.static_zone import load_static_zones, in_static_zone
 from integration.static_avoidance_io import configured_avoidance_speed_kmh
 from static_avoidance_path_latch import AvoidancePathLatch
-from shadow_wall_guard import pick_shadow_detour, check_wall_clearance
+from shadow_wall_guard import pick_shadow_detour, check_wall_clearance, close_forward_collision
 
 NETWORK_FILE = ROOT / "config" / "integration_network.json"
 GLOBAL_PATH_FILE = ROOT / "path" / "2026_molit_comp_global_path.txt"
@@ -265,6 +265,14 @@ def main():
                 plan, latch_state = latch.apply(
                     raw_plan, ego_x, ego_y, obstacles=planner_obstacles
                 )
+                if gps_shadow and close_forward_collision(vehicle_points, wall_cfg):
+                    # Independent near-field wall/object guard. This also
+                    # protects against a wall missed by width-limited DBSCAN.
+                    plan = PlanResult(
+                        "STOP_REQUIRED", np.empty((0,3)), None, None, 0.0,
+                        "SHADOW_FORWARD_LIDAR_OBSTACLE"
+                    )
+                    latch_state = "SHADOW_FORWARD_LIDAR_OBSTACLE"
                 # Preserve dynamic obstacle STOP in the GPS shadow using
                 # the existing LiDAR tracker's dynamic classification.
                 # No unverified passing maneuver around moving traffic.
