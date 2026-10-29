@@ -452,6 +452,25 @@ class MissionManager:
                     elif not accepted:
                         self.merge_accept_count = 0
                         self.merge_last_accept_update = 0.0
+                elif (is_roundabout and self.roundabout_had_stop
+                      and self.roundabout_safe_released_wp is None):
+                    # A fail-closed VISION_WAIT at the boundary may have
+                    # stopped the car without setting the risk latch.
+                    # Require the same three DISTINCT safe packets before
+                    # marking the roundabout entry as safely released.
+                    accepted = (merge_fresh and merge_state == "MERGE_ACCEPT"
+                                and merge_risk < threshold)
+                    if accepted and float(merge_updated_at) > self.merge_last_accept_update + 1e-6:
+                        self.merge_last_accept_update = float(merge_updated_at)
+                        self.merge_accept_count += 1
+                        if self.merge_accept_count >= int(
+                                self.merge_cfg.get("accept_confirm_frames", 3)):
+                            self.roundabout_safe_released_wp = int(nearest_index)
+                            self.merge_accept_count = 0
+                            self.merge_last_accept_update = 0.0
+                    elif not accepted:
+                        self.merge_accept_count = 0
+                        self.merge_last_accept_update = 0.0
 
                 if self.roundabout_done:
                     merge_state = "ROUNDABOUT_DONE"
