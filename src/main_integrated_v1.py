@@ -34,6 +34,10 @@ from integration.mission_io import (
     parse_traffic_message,
 )
 from integration.mission_manager import MissionManager
+from integration.highway_follow_io import (
+    in_follow_zone, highway_speed_zones, grade_speed_cap, parse_follow_message,
+)
+from integration.highway_speed_profile import build_highway_profile
 from integration.static_avoidance_io import (
     parse_static_message, local_path_pure_pursuit,
     configured_avoidance_speed_kmh,
@@ -97,6 +101,8 @@ def open_log():
         "pedestrian_zone", "pedestrian_state", "pedestrian_risk",
         "pedestrian_count", "pedestrian_stop", "pedestrian_age_sec",
         "pedestrian_frame", "pedestrian_clear_count",
+        "follow_zone", "follow_state", "follow_risk", "follow_grade",
+        "follow_speed_cap_kmh", "follow_age_sec", "follow_vehicles",
     ])
     return path, f, w
 
@@ -132,7 +138,12 @@ def main():
                         help="observe camera pedestrian risk only in configured dynamic WP zone")
     parser.add_argument("--pedestrian-control", action="store_true",
                         help="stop on pedestrian risk or stale results only in dynamic WP zone")
-    parser.add_argument("--max-speed", type=float, default=57.0)
+    parser.add_argument("--follow", action="store_true",
+                        help="observe highway in-lane front camera vehicle risk")
+    parser.add_argument("--follow-control", action="store_true",
+                        help="apply graded highway-follow target speed caps")
+    parser.add_argument("--max-speed", type=float, default=57.0,
+                        help="normal <=57; explicitly request up to 120 on verified highway WPs")
     args = parser.parse_args()
 
     if args.merge_control and not args.merge:
@@ -143,8 +154,14 @@ def main():
         parser.error("--pedestrian-control requires --pedestrian")
     if args.pedestrian and not args.traffic:
         parser.error("--pedestrian requires --traffic and the 9291 camera relay")
-    if args.max_speed <= 0.0 or args.max_speed > 57.0:
-        parser.error("--max-speed must be >0 and <=57")
+    if args.follow_control and not args.follow:
+        parser.error("--follow-control requires --follow")
+    if args.follow and not args.traffic:
+        parser.error("--follow requires --traffic for camera relay 9291->9305")
+    if not 0 < args.max_speed <= 120.0:
+        parser.error("--max-speed must be >0 and <=120")
+    if args.max_speed > 57.0 and not args.follow_control:
+        parser.error("speed >57 requires active --follow --follow-control; not V7 validated")
 
     network = load_json(NETWORK_FILE)
     missions = load_json(MISSION_FILE)
@@ -152,9 +169,21 @@ def main():
 
     # Importing V7 already applies the validated V7 monkey-patches.
     global_path = base.load_path(base.PATH_FILE)
+    # Preserve the V7 <=57 baseline; >57 only in explicitly verified WPs
+    # and ONLY when following perception/control is enabled.
     target_profile, radius_profile, full_profile = (
-        profile_test.build_test_profile(global_path, args.max_speed)
+        profile_test.build_test_profile(global_path, min(args.max_speed, 57.0))
     )
+    follow_cfg = missions.get("highway_follow", {})
+    fast_zones = highway_speed_zones(follow_cfg, len(global_path))
+    if args.max_speed > 57.0:
+        target_profile = build_highway_profile(
+            target_profile, radius_profile, global_path, fast_zones,
+            args.max_speed,
+            a_lat_mps2=float(follow_cfg.get("assumed_max_lateral_accel_mps2", 2.0)),
+            preview_decel_mps2=float(follow_cfg.get("assumed_preview_decel_mps2", 2.0)),
+            accel_mps2=float(follow_cfg.get("assumed_profile_accel_mps2", 3.0)),
+        )
 
     gps_receiver = Receiver(
         network["gps"]["bind_ip"],
@@ -217,8 +246,23 @@ def main():
             int(network["static_pose"]["port"]),
         )
 
-    # Camera 9291 remains owned by the traffic detector. The independent
-    # pedestrian worker receives relayed images and only sends a decision.
+    # Camera 9291 remains owned by traffic detector; pedestrian/follow
+    # share its UDP relay and the SAME YOLO/MiDaS process (no duplicate bind).
+    follow_rx = None
+    follow_msg = parse_follow_message(None)
+    follow_updated_at = 0.0
+    follow_was_in_zone = False
+    follow_zone_entered_at = 0.0
+    follow_timeout_sec = float(follow_cfg.get("risk_result_timeout_sec", 1.5))
+    if not 0.2 <= follow_timeout_sec <= 5.0:
+        raise ValueError("Invalid highway_follow.risk_result_timeout_sec")
+    if args.follow:
+        follow_net = network["highway_follow_result"]
+        if follow_net["bind_ip"] != "127.0.0.1":
+            raise RuntimeError("Follow result must remain on localhost")
+        follow_rx = LatestUdpTextReceiver(
+            "127.0.0.1", int(follow_net["port"]), max_size=2048,
+        )
     pedestrian_rx = None
     pedestrian_gate_tx = None
     pedestrian_gate_target = None
@@ -235,6 +279,7 @@ def main():
             network["pedestrian_result"]["bind_ip"],
             int(network["pedestrian_result"]["port"]), max_size=2048,
         )
+    if args.pedestrian or args.follow:
         gate_cfg = network["pedestrian_gate"]
         if gate_cfg["bind_ip"] != "127.0.0.1":
             raise RuntimeError("Pedestrian gate must be localhost")
@@ -313,6 +358,14 @@ def main():
         print(f"[STATIC ZONES WP] {static_zones}; outside=V7 only")
         print(f"[STATIC POSE] {pose_target}")
         print(f"[STATIC RESULT] {network['static_result']}")
+    print(f"[HIGHWAY FOLLOW] {'ON' if args.follow else 'OFF'} "
+          f"control={'ON' if args.follow_control else 'OBSERVE'} "
+          f"zones={follow_cfg.get('zones_wp')} fast_zones={fast_zones} "
+          f"speed_request={args.max_speed:.1f}")
+    if args.max_speed > 57.0:
+        print("[HIGHWAY WARNING] 120 km/h profile is EXPERIMENTAL; V7 steering not validated at this speed.")
+        if follow_cfg.get("tollgate_exit_wp") is None:
+            print("[HIGHWAY WARNING] tollgate WP unknown: SECOND section stays <=57 km/h.")
     print(f"[LOG] {log_path}")
 
     try:
@@ -335,6 +388,12 @@ def main():
                 if raw is not None:
                     merge = parse_merge_message(raw)
                     merge_updated_at = updated_at
+
+            if follow_rx is not None:
+                raw, updated_at, is_new = follow_rx.poll()
+                if raw is not None and is_new:
+                    follow_msg = parse_follow_message(raw)
+                    follow_updated_at = updated_at
 
             if static_rx is not None:
                 raw, updated_at, is_new = static_rx.poll()
@@ -462,6 +521,36 @@ def main():
 
             target_speed_kmh = mission["target_speed_kmh"]
             steering = mission["steering"]
+
+            # GRADED highway following, no arbitrary full brake on an image
+            # score. Other mission STOPs retain precedence. Stale data means
+            # a low-speed cap, never permission to drive 120.
+            follow_in_zone = in_follow_zone(
+                nearest_index, follow_cfg, len(global_path))
+            if follow_in_zone and not follow_was_in_zone:
+                follow_zone_entered_at = time.time()
+            follow_was_in_zone = follow_in_zone
+            follow_age = (max(0.0, time.time() - follow_updated_at)
+                          if follow_updated_at > 0.0 else float("inf"))
+            follow_fresh = bool(
+                follow_msg["valid"]
+                and follow_updated_at >= follow_zone_entered_at
+                and follow_age <= follow_timeout_sec
+                and follow_msg["waypoint_index"] is not None
+                and abs(int(follow_msg["waypoint_index"]) - nearest_index) <= 60
+            )
+            follow_zone_active = bool(args.follow and follow_in_zone)
+            follow_state = ("OFF" if not args.follow else
+                            "ZONE_OFF" if not follow_in_zone else
+                            "VISION_WAIT" if not follow_fresh else
+                            f"GRADE_{follow_msg['grade']}")
+            follow_grade = (follow_msg["grade"] if follow_fresh else 4)
+            follow_risk = (follow_msg["risk"] if follow_fresh else 1.0)
+            follow_cap = (grade_speed_cap(follow_risk)[1] if follow_fresh else
+                          float(follow_cfg.get("missing_camera_cap_kmh", 15.0)))
+            if args.follow_control and follow_in_zone:
+                target_speed_kmh = min(target_speed_kmh, follow_cap)
+                mission["reasons"].append("highway_follow_" + follow_state.lower())
 
             pedestrian_age = (
                 max(0.0, time.time() - pedestrian_updated_at)
@@ -669,6 +758,12 @@ def main():
                 f"{pedestrian_age:.3f}" if math.isfinite(pedestrian_age) else "inf",
                 pedestrian_result["frame"] if pedestrian_fresh else "",
                 pedestrian_latch.clear_count,
+                int(follow_zone_active), follow_state,
+                f"{follow_risk:.3f}" if follow_zone_active else "",
+                follow_grade if follow_zone_active else "",
+                f"{follow_cap:.2f}" if follow_zone_active else "",
+                f"{follow_age:.3f}" if math.isfinite(follow_age) else "inf",
+                follow_msg["vehicles"] if follow_fresh else "",
             ])
 
             print("\033[2J\033[H", end="")
@@ -732,6 +827,12 @@ def main():
                 f"SAFE={mission['merge_accept_count']}"
             )
             print(
+                f"HIGHWAY     : {follow_state} / RISK={follow_risk:.2f}"
+                f" GRADE={follow_grade} CAP={follow_cap:.1f}km/h"
+                f" / FAST={'YES' if any(a <= nearest_index <= b for a,b in fast_zones) else 'NO'}"
+                f" / AGE={follow_age:.2f}s"
+            )
+            print(
                 f"STATIC      : {static_state} / "
                 f"age={static_age:.2f}s / "
                 f"CTRL={'ON' if args.static_control else 'OBSERVE'} / "
@@ -787,6 +888,8 @@ def main():
             pose_tx.close()
         if pedestrian_rx is not None:
             pedestrian_rx.close()
+        if follow_rx is not None:
+            follow_rx.close()
         if pedestrian_gate_tx is not None:
             pedestrian_gate_tx.close()
         log_file.flush()
