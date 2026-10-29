@@ -379,11 +379,21 @@ class MissionManager:
                 self.merge_accept_count = 0
                 self.merge_last_accept_update = 0.0
             else:
-                target_speed = min(
-                    target_speed,
-                    float(self.merge_cfg.get("zone_speed_kmh", 25.0))
+                # Roundabout keeps the existing conservative curve/zone speed.
+                # Highway merge: yellow (risk below STOP threshold) no longer
+                # imposes an unconditional 20km/h cap. V7, traffic, static,
+                # pedestrian, and highway-follow caps remain authoritative.
+                is_roundabout = self._in_any_zone(
+                    int(nearest_index), self.merge_cfg.get("roundabout_zones", [])
                 )
-                reasons.append("merge_zone_speed")
+                if is_roundabout or not bool(
+                    self.merge_cfg.get("highway_yellow_no_speed_cap", False)
+                ):
+                    target_speed = min(
+                        target_speed,
+                        float(self.merge_cfg.get("zone_speed_kmh", 25.0))
+                    )
+                    reasons.append("merge_zone_speed")
                 threshold = float(self.merge_cfg.get("risk_stop_threshold", 0.60))
                 dangerous = (
                     merge_fresh
