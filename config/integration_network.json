@@ -12,7 +12,7 @@
     "port": 1909
   },
   "control": {
-    "target_ip": "172.20.10.2",
+    "target_ip": "192.168.0.1",
     "port": 9093
   },
   "traffic_result": {
