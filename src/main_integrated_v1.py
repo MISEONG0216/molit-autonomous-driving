@@ -620,9 +620,9 @@ def main():
             target_speed_kmh = mission["target_speed_kmh"]
             steering = mission["steering"]
 
-            # GRADED highway following, no arbitrary full brake on an image
-            # score. Other mission STOPs retain precedence. Stale data means
-            # a low-speed cap, never permission to drive 120.
+            # Highway camera risk is an uncalibrated image-space proxy.
+            # Conservative full brake on high risk or stale observations;
+            # lower caps are enforced with active approach braking.
             follow_in_zone = (not shadow_active and in_follow_zone(
                 nearest_index, follow_cfg, len(global_path)))
             if follow_in_zone and not follow_was_in_zone:
@@ -665,7 +665,7 @@ def main():
                 mission["reasons"].append("highway_follow_" + follow_state.lower())
                 mission["reasons"].append("highway_" + follow_reason.lower())
 
-            # Slow *before* the surveyed WP900-940 pedestrian crossing.
+            # Slow well before the user-confirmed WP900-940 crossing.
             # Mission STOP / stale perception still overrides this cap.
             pedestrian_slow_cfg = pedestrian_cfg.get("crossing_speed_zones", [])
             pedestrian_slow_cap = None
