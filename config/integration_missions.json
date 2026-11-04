@@ -201,7 +201,9 @@
     "max_steer_rad": 0.22,
     "notes": "Based on provided morai_lanenet_viz.py HSV/Canny/BEV/EMA, not actual TensorFlow LaneNet. On GPS missing/unchanged for >1.0s while moving, camera lane steer is PRIMARY. Bounded IMU+speed dead reckoning is only for original LiDAR planner alignment and approximate WP gates, never for primary steering. Never continue blindly: no initial fix, stale lane, invalid lane, IMU/status failure, pose gap>0.8s, >12s or >35m blackout or >7m path offset => full stop. Full-vehicle dynamic traffic detection is NOT covered; existing pedestrian YOLO/MiDaS only.",
     "allow_sensor_guided_extended": true,
-    "sensor_guided_extended_note": "No 12s wall-clock cutoff only when fresh camera lane and LiDAR are independently required by main; drifting XY is never allowed to set Pure Pursuit steering. Missing lane or LiDAR => stop. Offline vision-only mode is not verified for arbitrary tunnel length."
+    "sensor_guided_extended_note": "No 12s wall-clock cutoff only when fresh camera lane and LiDAR are independently required by main; drifting XY is never allowed to set Pure Pursuit steering. Missing lane or LiDAR => stop. Offline vision-only mode is not verified for arbitrary tunnel length.",
+    "timed_steer_cmd_rad": 1,
+    "timed_steer_note": "Explicit --shadow-timed-steer MORAI-only experiment: 10-15s commanded left +1.0 rad, 30-35s right -1.0 rad. During other stages use live camera lane center; no confirmed lane-change or legal lane boundary check; maintain LiDAR obstacle/stale full-stop, pedestrian stop and 5km/h cap. Resume GPS Pure Pursuit only after GPS recovery verification."
   },
   "gps_shadow_wall_guard": {
     "check_ahead_m": 18,
