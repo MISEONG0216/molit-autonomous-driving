@@ -1,17 +1,18 @@
-"""MORAI simulator-only timed shadow steering phases.
+"""MORAI-only timed GPS-shadow steering experiment.
 
-Timing starts at the first SHADOW controller loop. These are fixed-duration
-steering requests, NOT verified lane changes. No control packets are sent here.
-The integrated controller retains camera-lane validation and all STOP gates.
+All timing is relative to first SHADOW loop. These commands do not establish
+lane-change completion or correct camera selection of the desired lane.
+No UDP or direct control commands originate in this module.
 """
 import math
 
 
 def timed_shadow_steer(elapsed_sec, steering_limit_rad=1.0):
-    """Return (phase, override_rad); None means camera lane-center control.
+    """Return (phase, override_rad); None requests camera lane-centering.
 
-    Timeline: 0-10 keep, 10-15 left, 15-30 keep, 30-35 right,
-    >=35 keep. A positive control steer represents a left turn.
+    0-10s: camera keep, 10-15s: left full, 15-18s: right full correction,
+    18-33s: camera keep, 33-38s: right full, 38-41s: left full correction,
+    >=41s: camera keep. +rad means steering left in current controller.
     """
     elapsed = float(elapsed_sec)
     limit = float(steering_limit_rad)
@@ -22,8 +23,12 @@ def timed_shadow_steer(elapsed_sec, steering_limit_rad=1.0):
         return "KEEP_BEFORE_LEFT", None
     if elapsed < 15.0:
         return "FULL_LEFT_5S", limit
-    if elapsed < 30.0:
+    if elapsed < 18.0:
+        return "CORRECT_RIGHT_3S", -limit
+    if elapsed < 33.0:
         return "KEEP_AFTER_LEFT", None
-    if elapsed < 35.0:
+    if elapsed < 38.0:
         return "FULL_RIGHT_5S", -limit
+    if elapsed < 41.0:
+        return "CORRECT_LEFT_3S", limit
     return "KEEP_AFTER_RIGHT", None
