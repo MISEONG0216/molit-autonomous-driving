@@ -227,11 +227,12 @@
     ],
     "max_horizon_m": 24,
     "pre_obstacle_buffer_m": 1.5,
-    "min_shift_end_m": 4,
+    "min_shift_end_m": 6,
     "post_obstacle_hold_m": 2.5,
     "return_length_m": 5,
     "end_visibility_window_m": 3,
     "end_visibility_min_points": 3,
-    "side_observation_max_m": 7
+    "side_observation_max_m": 7,
+    "obstacle_extent_gap_m": 0.8
   }
 }
