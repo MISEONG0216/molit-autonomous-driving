@@ -21,7 +21,7 @@ def cloud(near=0, far=0, left=25, right=25):
     points += [(2.5, 0., 0.) for _ in range(near)]
     points += [(8.0, 0., 0.) for _ in range(far)]
     # Additional observed sector points so ROI has >=80 valid returns
-    points += [(float(x), 6.0, 0.0) for x in np.linspace(4., 11., 45)]
+    points += [(float(x), 6.0, 0.0) for x in np.linspace(4., 11., 60)]
     return np.array(points)
 
 
