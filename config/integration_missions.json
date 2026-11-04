@@ -243,15 +243,18 @@
     "allowed_points": 0,
     "avoidance_speed_kmh": 5,
     "max_result_age_sec": 2.4,
-    "notes": "V44: test three return starts (base, +1.5m, +3m) for each side and offset; select ONLY original 1.6/2.0/2.4/2.8m if full sweep has zero hits and endpoint observed on BOTH sides. 2.9-3.2m remain diagnostic-only. Preserve 5km/h and all shadow stops. Verify live MORAI and rules before any additional maneuver expansion. V45: align maximum accepted LiDAR result age (2.4s) to wall-guard configured verified-scan age; no scan or detection safety gate is disabled. At 5 km/h this still means up to ~3.3m of travel between scans; requires supervised MORAI validation.",
+    "notes": "V46: 7 active offsets x 7 return delays x 2 sides = up to 98 checked routes. Candidate score prioritizes observed excess clearance with bounded reward; curvature, lateral shift and return delay are penalties. Only zero-hit, dual-sided return-observed, non-diagnostic paths are eligible. STOP_REQUIRED for unknown/blocked routes stays unchanged. max_result_age_sec=2.4s V45; shadow avoidance speed=5 km/h. Not vehicle-validated.",
     "release_tail_points": 9,
     "release_end_distance_m": 4.5,
     "release_clear_ahead_m": 6,
     "release_max_front_points": 5,
     "candidate_offsets_m": [
       1.6,
+      1.8,
       2,
+      2.2,
       2.4,
+      2.6,
       2.8
     ],
     "max_horizon_m": 24,
@@ -271,8 +274,17 @@
     ],
     "return_delay_options_m": [
       0,
+      0.5,
+      1,
       1.5,
+      2,
+      2.5,
       3
-    ]
+    ],
+    "score_clearance_cap_m": 1,
+    "score_clearance_weight": 2,
+    "score_curvature_weight": 0.8,
+    "score_offset_weight": 0.2,
+    "score_delay_weight": 0.03
   }
 }
