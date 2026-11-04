@@ -99,6 +99,7 @@ def main():
     static_cfg = missions.get("static", {})
     wall_cfg = missions.get("gps_shadow_wall_guard", {})
     ego_cfg = missions.get("gps_shadow_ego_planner", {})
+    commit_locked_detour = ego_cfg.get("commit_locked_path_despite_new_hazards", False) is True
     static_zones = load_static_zones(static_cfg, len(path))
     avoidance_speed_kmh = configured_avoidance_speed_kmh(static_cfg)
 
@@ -166,6 +167,7 @@ def main():
 
     print("[STATIC ZONES] " + str(static_zones))
     print(f"[STATIC AVOID SPEED] {avoidance_speed_kmh:.1f} km/h")
+    print(f"[SHADOW LOCKED DETOUR] committed-route experimental mode={commit_locked_detour}")
     print("[STATIC WORKER] LiDAR -> detect -> track -> local path -> UDP result")
     print("[CONTROL] No EgoCtrlCmd sender in this process.")
     print(f"[LIDAR] {lidar_ip}:{lidar_port}")
@@ -330,10 +332,17 @@ def main():
                             remaining_cfg["minimum_path_ahead_m"] = min(
                                 6.0, max(1.0, remaining_forward - 1.5)
                             )
-                            wall_ok, reason = check_wall_clearance(
-                                remaining, (ego_x, ego_y, ego_yaw),
-                                vehicle_points, remaining_cfg
-                            )
+                            if commit_locked_detour:
+                                # Experimental: follow an ALREADY VERIFIED and
+                                # latched route without rechecking new LiDAR
+                                # obstacles/walls on every subsequent scan.
+                                # Initial detour selection remains unchanged.
+                                wall_ok, reason = True, "COMMITTED_PATH"
+                            else:
+                                wall_ok, reason = check_wall_clearance(
+                                    remaining, (ego_x, ego_y, ego_yaw),
+                                    vehicle_points, remaining_cfg
+                                )
                             if wall_ok:
                                 plan = PlanResult(
                                     "AVOIDING", shadow_locked_path,
@@ -399,7 +408,7 @@ def main():
 
                 # Preserve original LiDAR dynamic tracking in the shadow;
                 # do not try to pass a moving person or vehicle.
-                if gps_shadow:
+                if gps_shadow and not (commit_locked_detour and shadow_locked_path is not None):
                     for track in tracked:
                         if (bool(getattr(track, "is_dynamic", False))
                                 and 0.0 < float(track.x) < float(
