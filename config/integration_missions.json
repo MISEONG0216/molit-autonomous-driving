@@ -243,7 +243,7 @@
     "allowed_points": 0,
     "avoidance_speed_kmh": 5,
     "max_result_age_sec": 2.4,
-    "notes": "V49: V48 18 candidate paths unchanged. Remove 8-second recovery. Following a verified detour tail release, do not request another avoidance route for at most 8m of travel; each fresh LiDAR scan must verify 12m forward corridor and side observation or STOP_REQUIRED; emergency close forward/dynamic checks remain ON. Camera lane handoff speed limited to 3km/h; GPS shadow pose/freshness fail stops unchanged. This is NOT a blanket LiDAR-off mode and is not vehicle-validated.",
+    "notes": "V55: preserves V54 17m 3-point detection, 18 verified detour candidates, temporal LiDAR return observation, 3.8m gentle return steering and 8m post-detour handoff. ONLY during handoff, require >=80 valid forward ROI points, 0 near-center returns in 1-4m, <=2 far-center returns in 4-12m, and >=8 wall observations on AT LEAST ONE side; lack of opposite wall evidence alone is diagnostic, not STOP. No observations on either side, confirmed centre returns, emergency short-range/dynamic detections, stale LiDAR, lost lane or invalid GPS-shadow pose still stop. MORAI validation required.",
     "release_tail_points": 9,
     "release_end_distance_m": 4.5,
     "release_clear_ahead_m": 6,
