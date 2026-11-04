@@ -172,6 +172,8 @@ def main():
     template_outbound_offset = None
     second_match_streak = 0
     shadow_was_active = False
+    gps_normal_since = None
+    shadow_resume_grace_s = 8.0
 
     print("[STATIC ZONES] " + str(static_zones))
     print(f"[STATIC AVOID SPEED] {avoidance_speed_kmh:.1f} km/h")
@@ -232,12 +234,36 @@ def main():
             waypoint_index = nearest_index(path, ego_x, ego_y)
             inside_zone = (in_static_zone(waypoint_index, static_zones)
                            or gps_shadow)
-            # Template sequence is per continuous GPS-shadow interval.
-            if not gps_shadow and shadow_was_active:
-                template_completed_count = 0
-                template_active_id = None
-                template_outbound_offset = None
-                second_match_streak = 0
+            # A 1-3s GPS fix inside the tunnel is NOT a new mission.
+            # The 2026-11-04 CSV shows SHADOW -> GPS at WP3839 ->
+            # SHADOW at WP3848, which previously reset the template
+            # counter to zero in the middle of FIRST_LEFT.
+            if gps_shadow:
+                if gps_normal_since is not None:
+                    print("[V50 GPS FLICKER] shadow resumed after {:.1f}s; "
+                          "template_stage={} active={}".format(
+                              time.monotonic() - gps_normal_since,
+                              template_completed_count, template_active_id),
+                          flush=True)
+                gps_normal_since = None
+            else:
+                if gps_normal_since is None:
+                    gps_normal_since = time.monotonic()
+                if (time.monotonic() - gps_normal_since >=
+                        shadow_resume_grace_s and
+                        (template_active_id is not None or
+                         template_completed_count > 0 or
+                         shadow_locked_path is not None)):
+                    print("[V50 GPS RECOVERED] continuous GPS {:.1f}s; "
+                          "reset shadow template mission".format(
+                              time.monotonic() - gps_normal_since),
+                          flush=True)
+                    template_completed_count = 0
+                    template_active_id = None
+                    template_outbound_offset = None
+                    second_match_streak = 0
+                    shadow_locked_path = None
+                    shadow_side = None
             shadow_was_active = gps_shadow
             # During a GPS blackout, any road obstacle may need the original
             # static planner. The main still imposes a strict shadow speed cap
@@ -567,9 +593,12 @@ def main():
                         latch_state = "EGO_LIDAR_EMERGENCY_FORWARD_STOP"
                     raw_plan = plan
                 else:
-                    # GPS is valid: preserve original global static planner.
-                    shadow_side = None
-                    shadow_locked_path = None
+                    # GPS valid: original global static planner controls.
+                    # Retain an interrupted shadow path for a short tunnel
+                    # GPS flicker. Main still owns steering and will use GPS
+                    # while valid. Re-entering SHADOW re-checks the path
+                    # against fresh LiDAR before allowing it to override
+                    # camera steering. Continuous GPS resets it above.
                     raw_plan = planner.plan(
                         ego_x=ego_x, ego_y=ego_y, obstacles=planner_obstacles
                     )
