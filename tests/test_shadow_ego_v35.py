@@ -39,7 +39,7 @@ class EgoPlannerTest(unittest.TestCase):
         result=choose_local_detour(cloud(),self.cfg)
         self.assertEqual(result["status"],"AVOIDING",result["reason"])
         self.assertEqual(result["side"],1)
-        self.assertEqual(len(result["path"]),31)
+        self.assertGreaterEqual(len(result["path"]),31)  # V40 can extend the return distance
 
     def test_both_close_walls_produce_stop(self):
         result=choose_local_detour(cloud(right=-1.6,left=1.8),self.cfg)
