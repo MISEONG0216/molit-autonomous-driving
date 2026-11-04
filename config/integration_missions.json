@@ -286,5 +286,11 @@
     "score_curvature_weight": 0.8,
     "score_offset_weight": 0.2,
     "score_delay_weight": 0.03
+  },
+  "gps_shadow_recovery": {
+    "stop_delay_sec": 8,
+    "clear_scan_confirmations": 3,
+    "recovery_speed_kmh": 2,
+    "note": "V47: When GPS SHADOW planner says STOP_REQUIRED for missing side/return observations for >=8s, the main may temporarily track fresh camera lane at <=2km/h ONLY with a fresh LiDAR result verifying ZERO central hits within forward 1-12m and at least eight side-sector returns on EACH side, confirmed across three distinct scans. Actual obstacles/dynamic STOP, unsafe/stale LiDAR, invalid lane, and GPS pose STOP are never bypassed. This is a supervised MORAI-only experiment."
   }
 }
