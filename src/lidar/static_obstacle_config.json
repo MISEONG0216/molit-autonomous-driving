@@ -9,8 +9,10 @@
   "return_m": 12,
   "candidate_offsets_m": [
     -2.2,
+    -2,
     -1.8,
     1.8,
+    2,
     2.2
   ],
   "output_spacing_hint_m": 0.5,
