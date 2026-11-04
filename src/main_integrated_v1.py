@@ -51,7 +51,6 @@ from integration.dynamic_pedestrian_io import (
 from integration.gps_shadow_io import GpsShadowPose
 from integration.gps_shadow_lane import parse_lane_result
 from integration.shadow_tail_io import shadow_tail_steering
-from integration.shadow_recovery_gate import ShadowRecoveryGate
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -337,13 +336,6 @@ def main():
     static_cfg = missions.get("static", {})
     static_zones = load_static_zones(static_cfg, len(global_path))
     static_route_engaged = False  # Hold fail-stop beyond zone until latch releases.
-    recovery_cfg = missions.get("gps_shadow_recovery", {})
-    shadow_recovery = ShadowRecoveryGate(
-        delay_sec=float(recovery_cfg.get("stop_delay_sec", 8.0)),
-        confirmations=int(recovery_cfg.get("clear_scan_confirmations", 3)),
-    )
-    recovery_state = "INACTIVE"
-    recovery_wait_sec = 0.0
     static_timeout_sec = float(static_cfg.get("result_timeout_sec", 3.5))
     # Same speed request as the LiDAR worker/planner/path latch.
     # CLEAR continues using the existing V7 speed profile unchanged.
@@ -815,30 +807,17 @@ def main():
                 elif static_active:
                     mission["reasons"].append("static_local_avoidance")
 
-            # After eight seconds of a *visibility-only* stop, allow a very
-            # slow camera-lane recovery ONLY if fresh LiDAR independently
-            # verifies the straight corridor, over multiple new scans.
-            # A timeout never overrides observed obstacle/dynamic STOP,
-            # stale LiDAR/camera, or GPS-shadow pose invalidity.
-            recovery_state, recovery_allowed, recovery_wait_sec = (
-                shadow_recovery.update(
-                    shadow_active=bool(shadow_active and gps_mode == "SHADOW"),
-                    static_fresh=static_fresh,
-                    static_plan=static_plan,
-                    lane_fresh=lane_fresh,
-                )
-            )
-            if (recovery_allowed and args.static_control and static_stop
-                    and not shadow_stop and not pedestrian_stop):
-                static_stop = False
-                steering = float(lane_result["steering"])
+            # After a completed detour, allow the existing camera lane
+            # controller to take over without requesting a second detour.
+            # The worker still checks LiDAR each scan; any STOP wins.
+            if (shadow_active and static_fresh
+                    and static_plan.get("post_detour_handoff", False)
+                    and not static_stop and lane_fresh):
                 target_speed_kmh = min(
-                    float(recovery_cfg.get("recovery_speed_kmh", 2.0)),
-                    float(shadow_cfg.get("shadow_speed_kmh", 12.0)),
-                    float(args.max_speed),
-                )
-                static_state = "SHADOW_VERIFIED_RECOVERY"
-                mission["reasons"].append("shadow_verified_recovery")
+                    target_speed_kmh, float(
+                        missions.get("gps_shadow_ego_planner", {}).get(
+                            "post_detour_handoff_speed_kmh", 3.0)))
+                mission["reasons"].append("shadow_post_detour_lane_handoff")
 
             if (shadow_active and static_active and gps_mode == "SHADOW"):
                 # Obstacle may occlude the lane. Permit ONLY a fresh valid
@@ -1081,7 +1060,7 @@ def main():
             )
             if shadow_active:
                 print(
-                    f"SHADOW RECOVERY: {recovery_state} / elapsed={recovery_wait_sec:.1f}s "
+                    f"SHADOW HANDOFF: active={static_plan.get('post_detour_handoff', False) if static_fresh else False} "
                     f"/ forward_clear={static_plan.get('forward_clear_verified', False) if static_fresh else False} "
                     f"/ lane={lane_fresh}"
                 )
