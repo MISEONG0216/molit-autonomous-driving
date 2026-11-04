@@ -218,6 +218,8 @@
     "release_tail_points": 9,
     "release_end_distance_m": 4.5,
     "release_clear_ahead_m": 6,
-    "release_max_front_points": 5
+    "release_max_front_points": 5,
+    "commit_locked_path_despite_new_hazards": true,
+    "committed_path_note": "Experimental simulator-only mode. Once an initially LiDAR-verified GPS-shadow detour has been latched, subsequent wall-clearance rejections and dynamic-track STOPs do not cancel that route. Initial detour selection, final tail release safety, sensor freshness and main-controller fail-stops remain enabled. Collision possible if new obstacles enter committed path."
   }
 }
