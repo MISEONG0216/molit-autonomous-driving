@@ -191,6 +191,13 @@ def choose_second_survey_hold(points, config, template, clearance):
     candidate = pts[(pts[:, 0] >= xmin) & (pts[:, 0] <= xmax) &
                     (pts[:, 1] >= ymin) & (pts[:, 1] <= ymax)]
     if len(candidate) < threshold:
+        # If the expected object arrives TOO CLOSE without being matched,
+        # stop instead of allowing the camera to blindly approach it.
+        late = pts[(pts[:, 0] >= float(cfg["near_unmatched_stop_m"])) &
+                   (pts[:, 0] < xmin) &
+                   (pts[:, 1] >= ymin) & (pts[:, 1] <= ymax)]
+        if len(late) >= threshold:
+            return dict(failure, reason="SECOND_MATCH_WINDOW_MISSED")
         return dict(status="CLEAR", side=None, path=[],
                     reason="WAITING_SECOND_SURVEY_MATCH", diagnostics=[],
                     template_id=template["id"], match=False)
@@ -215,8 +222,13 @@ def choose_second_survey_hold(points, config, template, clearance):
             matched.append((abs(center_forward -
                               float(cfg["target_forward_m"])), group))
     if not matched:
-        # Reject rather than confusing walls/lanes with the second object
-        # while continuing in camera lane if still sufficiently far away.
+        # A nearby unmatched object could be a wall or a differently placed
+        # barrier; stop if it is within the critical 15m approach zone.
+        late = pts[(pts[:, 0] >= float(cfg["near_unmatched_stop_m"])) &
+                   (pts[:, 0] < xmin) &
+                   (pts[:, 1] >= ymin) & (pts[:, 1] <= ymax)]
+        if len(late) >= threshold:
+            return dict(failure, reason="SECOND_SURVEY_UNMATCHED_CLOSE")
         return dict(status="CLEAR", side=None, path=[],
                     reason="SECOND_SURVEY_PATTERN_MISMATCH",
                     diagnostics=[{"candidate_points":len(candidate)}],
