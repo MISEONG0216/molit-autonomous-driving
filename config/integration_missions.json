@@ -203,7 +203,7 @@
     "allow_sensor_guided_extended": true,
     "sensor_guided_extended_note": "No 12s wall-clock cutoff only when fresh camera lane and LiDAR are independently required by main; drifting XY is never allowed to set Pure Pursuit steering. Missing lane or LiDAR => stop. Offline vision-only mode is not verified for arbitrary tunnel length.",
     "timed_steer_cmd_rad": 1,
-    "timed_steer_note": "Explicit --shadow-timed-steer MORAI-only experiment: 10-15s commanded left +1.0 rad, 30-35s right -1.0 rad. During other stages use live camera lane center; no confirmed lane-change or legal lane boundary check; maintain LiDAR obstacle/stale full-stop, pedestrian stop and 5km/h cap. Resume GPS Pure Pursuit only after GPS recovery verification."
+    "timed_steer_note": "MORAI --shadow-timed-steer experiment: 10-15s +1.0rad LEFT, 15-18s -1.0rad RIGHT correction, 18-33s camera keep, 33-38s -1.0rad RIGHT, 38-41s +1.0rad LEFT correction, then camera keep. Fixed steering is not a validated lane change or lane-centering guarantee. LiDAR obstacle/stale full-stop, pedestrian stop, lane freshness, and shadow 5km/h cap retained. Restore global PP only on validated GPS recovery."
   },
   "gps_shadow_wall_guard": {
     "check_ahead_m": 18,
