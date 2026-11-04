@@ -163,6 +163,7 @@ def main():
     shadow_verified = False
     shadow_side = None
     shadow_locked_path = None
+    shadow_plan_last_report = None
 
     print("[STATIC ZONES] " + str(static_zones))
     print(f"[STATIC AVOID SPEED] {avoidance_speed_kmh:.1f} km/h")
@@ -352,6 +353,30 @@ def main():
                                 latch_state = "EGO_LIDAR_BLOCKED_"+reason
                     if shadow_locked_path is None and latch_state != "EGO_LIDAR_TAIL_RELEASED":
                         local = choose_local_detour(vehicle_points, ego_cfg)
+                        report = (local["status"], local["reason"])
+                        if report != shadow_plan_last_report or scan_count % 25 == 0:
+                            print(
+                                "[SHADOW V40] scan={} result={} reason={}".format(
+                                    scan_count, local["status"], local["reason"]
+                                )
+                            )
+                            for detail in local.get("diagnostics", []):
+                                if "offset_m" in detail:
+                                    print(
+                                        "[SHADOW CANDIDATE] {} {:.1f}m {} "
+                                        "hits={} clearance_min={:.2f}m "
+                                        "shift={:.1f}m return={:.1f}-{:.1f}m".format(
+                                            detail["side"], detail["offset_m"],
+                                            detail["reason"], detail["hit_points"],
+                                            detail["min_distance_m"],
+                                            detail["shift_end_m"],
+                                            detail["return_start_m"],
+                                            detail["return_end_m"],
+                                        )
+                                    )
+                                else:
+                                    print("[SHADOW VISIBILITY] {}".format(detail))
+                            shadow_plan_last_report = report
                         shadow_verified = local["status"] == "AVOIDING"
                         if shadow_verified:
                             shadow_side = local["side"]
