@@ -55,6 +55,35 @@ RISK_LEVELS = (
 )
 
 
+def conservative_follow_limit(risk, vehicles, fresh, cfg):
+    """Conservative camera-only front-car response.
+
+    Image risk is NOT metres, TTC, or a guarantee of collision avoidance.
+    Return (speed_cap_kmh, request_full_stop, diagnostic).
+    """
+    if not fresh:
+        return 0.0, True, "CAMERA_STALE_STOP"
+
+    try:
+        risk = float(risk)
+        vehicles = int(vehicles)
+    except (ValueError, TypeError):
+        return 0.0, True, "INVALID_CAMERA_STOP"
+    if not math.isfinite(risk) or not 0.0 <= risk <= 1.0 or vehicles < 0:
+        return 0.0, True, "INVALID_CAMERA_STOP"
+
+    stop_risk = float(cfg.get("front_vehicle_stop_risk", 0.35))
+    if risk >= stop_risk:
+        return 0.0, True, "FRONT_VEHICLE_RISK_STOP"
+
+    cap = float(cfg.get("unverified_distance_max_kmh", 35.0))
+    if vehicles > 0:
+        cap = min(cap, float(cfg.get("visible_vehicle_cap_kmh", 18.0)))
+    if risk >= float(cfg.get("front_vehicle_caution_risk", 0.15)):
+        cap = min(cap, float(cfg.get("caution_vehicle_cap_kmh", 8.0)))
+    return cap, False, ("FRONT_VEHICLE_SLOW" if vehicles or risk > 0 else "NO_FRONT_VEHICLE")
+
+
 def in_follow_zone(wp, cfg, path_length):
     """Never cross the loop boundary implicitly for the unspecified toll end."""
     if type(wp) is not int or not 0 <= wp < path_length:
