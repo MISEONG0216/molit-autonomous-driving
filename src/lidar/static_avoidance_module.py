@@ -36,6 +36,7 @@ from integration.static_avoidance_io import configured_avoidance_speed_kmh
 from static_avoidance_path_latch import AvoidancePathLatch
 from shadow_wall_guard import pick_shadow_detour, check_wall_clearance, close_forward_collision
 from shadow_ego_planner import choose_local_detour
+from shadow_entry_hold import EntryObservationGate
 
 NETWORK_FILE = ROOT / "config" / "integration_network.json"
 GLOBAL_PATH_FILE = ROOT / "path" / "2026_molit_comp_global_path.txt"
@@ -99,6 +100,10 @@ def main():
     static_cfg = missions.get("static", {})
     wall_cfg = missions.get("gps_shadow_wall_guard", {})
     ego_cfg = missions.get("gps_shadow_ego_planner", {})
+    entry_cfg = missions.get("gps_shadow_entry_hold", {})
+    entry_gate = EntryObservationGate(entry_cfg)
+    was_shadow = False
+    entry_last_report = None
     static_zones = load_static_zones(static_cfg, len(path))
     avoidance_speed_kmh = configured_avoidance_speed_kmh(static_cfg)
 
@@ -230,6 +235,12 @@ def main():
             # Keep a route accepted inside the zone until geometric release.
             planner_enabled = bool(inside_zone or latch.active)
             shadow_verified = False
+            if gps_shadow and not was_shadow:
+                entry_gate.reset()
+                print("[SHADOW ENTRY] Begin LiDAR stop-and-observe at GPS shadow activation", flush=True)
+            if not gps_shadow and was_shadow:
+                entry_gate.reset()
+            was_shadow = gps_shadow
             if not planner_enabled:
                 # Suppress detection, tracking and path generation elsewhere.
                 obstacles, tracked = [], []
@@ -464,6 +475,30 @@ def main():
                                 0.0, local["reason"]
                             )
                             latch_state = "EGO_LIDAR_STOP_"+local["reason"]
+                    # At tunnel entry, command a conservative complete
+                    # stop until fresh LiDAR scans cover both lateral sectors
+                    # while the reported pose is stationary. Always keep the
+                    # original planner's safety stops after this gate releases.
+                    if entry_cfg.get("enabled", False):
+                        entry_ready, entry_reason, entry_diag = entry_gate.check(
+                            time.monotonic(), (ego_x, ego_y, ego_yaw),
+                            vehicle_points,
+                        )
+                        entry_report = (entry_ready, entry_reason)
+                        if entry_report != entry_last_report or scan_count % 20 == 0:
+                            print(
+                                "[SHADOW ENTRY] scan={} ready={} reason={} {}".format(
+                                    scan_count, entry_ready, entry_reason, entry_diag
+                                ), flush=True,
+                            )
+                            entry_last_report = entry_report
+                        if not entry_ready:
+                            plan = PlanResult(
+                                "STOP_REQUIRED", np.empty((0, 3)), None, None,
+                                0.0, "ENTRY_OBSERVE_" + entry_reason,
+                            )
+                            latch_state = "ENTRY_OBSERVE_" + entry_reason
+                            shadow_verified = False
                     # Independent short-range emergency guard for the CLEAR
                     # state. A planner defect or a stale one-scan tail release
                     # must not permit continued lane driving into close returns.
