@@ -91,6 +91,65 @@ def choose_template_detour(points, config, completed_count=0):
                     diagnostics=[{"side_counts": side_counts}],
                     template_id=name)
     base_return_start = last_x + float(config["hold_after_obstacle_m"])
+    # V52: FIRST_LEFT was successfully entered, but its built-in
+    # return-to-original-y causes the premature RIGHT steering seen in CSV.
+    # Replace ONLY the FIRST_LEFT return with a measured LEFT hold.
+    first_hold_cfg = config.get("first_left_hold", {})
+    use_first_hold = (completed_count == 0 and name == "FIRST_LEFT" and
+                      first_hold_cfg.get("enabled", False))
+    if use_first_hold:
+        hold_end = min(
+            float(first_hold_cfg.get("max_hold_endpoint_m", 20.0)),
+            max(float(first_hold_cfg.get("min_hold_endpoint_m", 17.0)),
+                last_x + float(first_hold_cfg.get("hold_after_obstacle_m", 3.0)))
+        )
+        if (hold_end < last_x + 1.0 or
+                hold_end > float(config["max_path_horizon_m"])):
+            return dict(empty, reason="FIRST_HOLD_HORIZON_INVALID",
+                        template_id=name)
+        window = float(first_hold_cfg.get("hold_extra_visible_m", 3.0))
+        far_observed, far_visible = _two_side_observed(
+            pts, clearance,
+            int(config["min_return_observation_points_per_side"]),
+            hold_end - window, hold_end + 1.0)
+        diagnostics = []
+        approved = []
+        for offset in (float(v) for v in template["offset_options_m"]):
+            x = np.arange(0.0, hold_end + .001,
+                          float(config.get("sample_step_m", .5)))
+            entry = (x - float(config.get("start_shift_m", 1.5))) / max(
+                .1, base_shift_end -
+                float(config.get("start_shift_m", 1.5)))
+            # Original FIRST_LEFT entry has same smoothstep shape as V48.
+            # The crucial difference: NO geometric RIGHT return.
+            y = offset * _smoothstep(entry)
+            shape = np.column_stack((x, y))
+            distances, stages, minima = _sweep_metrics(
+                pts[:, :2], shape, clearance, base_shift_end, hold_end)
+            hits = int(sum(stages.values()))
+            safe = hits == 0 and far_visible
+            reason = ("SWEEP_COLLISION" if hits else
+                      "HOLD_ENDPOINT_UNOBSERVED" if not far_visible else
+                      "SAFE")
+            diagnostics.append(dict(
+                side="LEFT", offset_m=offset, return_delay_m=0.0,
+                shift_end_m=base_shift_end, return_start_m=hold_end,
+                return_end_m=hold_end, visible=far_visible,
+                far_side_points=far_observed, hit_points=hits,
+                min_distance_m=round(float(np.min(distances)), 3),
+                stage_hits=stages, stage_min_distance_m=minima,
+                reason=reason))
+            if safe:
+                approved.append((offset, shape))
+        if not approved:
+            return dict(empty, reason="NO_VERIFIED_FIRST_LEFT_HOLD",
+                        template_id=name, diagnostics=diagnostics)
+        offset, shape = min(approved, key=lambda item: item[0])
+        return dict(
+            status="AVOIDING", side=1, path=shape.tolist(),
+            reason="FIRST_LEFT_HOLD_VERIFIED",
+            template_id=name, selected_offset_m=offset,
+            selected_return_delay_m=0.0, diagnostics=diagnostics)
     diagnostics = []
     approved = []
     for offset in (float(v) for v in template["offset_options_m"]):
