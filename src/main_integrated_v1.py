@@ -120,7 +120,7 @@ def main():
     parser.add_argument("--gps-shadow", action="store_true",
                         help="on GPS loss use lane-center steering + existing LiDAR/person safety")
     parser.add_argument("--shadow-timed-steer", action="store_true",
-                        help="MORAI experiment: shadow +4s full LEFT 1s, +14s full RIGHT 1s; lane between, mandatory STOP gates")
+                        help="MORAI experiment: shadow +10-15s full LEFT, +30-35s full RIGHT; camera lane otherwise and STOP gates")
     parser.add_argument(
         "--traffic",
         action="store_true",
@@ -363,7 +363,7 @@ def main():
         print("[GPS SHADOW] ON: lane steering replaces global PP on stale/missing GPS")
         print("[GPS SHADOW] existing pedestrian STOP and LiDAR local path retain priority")
         if args.shadow_timed_steer:
-            print("[TIMED SHADOW TEST] +4s LEFT max 1s, +14s RIGHT max 1s, camera lane steering otherwise")
+            print("[TIMED SHADOW TEST] +10s LEFT 5s at +1.0rad, +30s RIGHT 5s at -1.0rad; camera lane steering otherwise")
             print("[TIMED SHADOW TEST] LiDAR avoidance paths disabled in shadow; obstacle/stale STOP retained")
         print("[GPS SHADOW] never launch a second UDP9291 subscriber")
     print(f"[TRAFFIC] {'ON' if args.traffic else 'OFF'} / stops={stop_indices}")
@@ -510,7 +510,7 @@ def main():
                     timed_shadow_started_at = time.monotonic()
                 timed_phase, timed_override = timed_shadow_steer(
                     time.monotonic() - timed_shadow_started_at,
-                    float(shadow_cfg.get("max_steer_rad", 0.22)),
+                    float(shadow_cfg.get("timed_steer_cmd_rad", 1.0)),
                 )
             else:
                 if gps_mode == "GPS":
