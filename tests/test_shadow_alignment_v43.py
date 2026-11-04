@@ -52,8 +52,16 @@ class ContinuousAlignmentTests(unittest.TestCase):
 
     def test_wall_collision_still_rejected(self):
         path = np.array([[0, 0, 0], [4, 0, 0], [8, 0, 0], [12, 0, 0]])
+        scan = np.vstack((
+            walls(),
+            np.column_stack((
+                np.linspace(3.0, 5.0, 10),
+                np.zeros(10),
+                np.zeros(10),
+            )),
+        ))
         good, why = check_wall_clearance(
-            path, (0, 0, 0), walls(left=0.7), CFG
+            path, (0, 0, 0), scan, CFG
         )
         self.assertFalse(good)
         self.assertEqual(why, "WALL_OR_OBSTACLE_IN_SWEPT_PATH")
