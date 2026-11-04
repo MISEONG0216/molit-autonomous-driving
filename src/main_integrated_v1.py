@@ -51,6 +51,7 @@ from integration.dynamic_pedestrian_io import (
 from integration.gps_shadow_io import GpsShadowPose
 from integration.gps_shadow_lane import parse_lane_result
 from integration.shadow_tail_io import shadow_tail_steering
+from integration.shadow_timed_steer import timed_shadow_steer
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -118,6 +119,8 @@ def main():
     parser.add_argument("--drive", action="store_true")
     parser.add_argument("--gps-shadow", action="store_true",
                         help="on GPS loss use lane-center steering + existing LiDAR/person safety")
+    parser.add_argument("--shadow-timed-steer", action="store_true",
+                        help="MORAI experiment: shadow +4s full LEFT 1s, +14s full RIGHT 1s; lane between, mandatory STOP gates")
     parser.add_argument(
         "--traffic",
         action="store_true",
@@ -154,6 +157,8 @@ def main():
                         help="normal <=57; explicitly request up to 120 on verified highway WPs")
     args = parser.parse_args()
 
+    if args.shadow_timed_steer and not args.gps_shadow:
+        parser.error('--shadow-timed-steer requires --gps-shadow')
     if args.gps_shadow and not args.traffic:
         parser.error("--gps-shadow requires --traffic for shared 9291 camera relay")
     if args.gps_shadow and not (args.static_control and args.pedestrian_control):
@@ -326,6 +331,7 @@ def main():
     run_start = time.time()
     period = 1.0 / base.CONTROL_HZ
     prev_control_time = time.time()
+    timed_shadow_started_at = None
 
     traffic = parse_traffic_message(None)
     traffic_updated_at = 0.0
@@ -356,6 +362,9 @@ def main():
     if args.gps_shadow:
         print("[GPS SHADOW] ON: lane steering replaces global PP on stale/missing GPS")
         print("[GPS SHADOW] existing pedestrian STOP and LiDAR local path retain priority")
+        if args.shadow_timed_steer:
+            print("[TIMED SHADOW TEST] +4s LEFT max 1s, +14s RIGHT max 1s, camera lane steering otherwise")
+            print("[TIMED SHADOW TEST] LiDAR avoidance paths disabled in shadow; obstacle/stale STOP retained")
         print("[GPS SHADOW] never launch a second UDP9291 subscriber")
     print(f"[TRAFFIC] {'ON' if args.traffic else 'OFF'} / stops={stop_indices}")
     if args.traffic:
@@ -496,6 +505,17 @@ def main():
                 continue
             current_x, current_y = position
             shadow_active = args.gps_shadow and gps_mode in ("SHADOW", "STOP")
+            if args.shadow_timed_steer and gps_mode == "SHADOW":
+                if timed_shadow_started_at is None:
+                    timed_shadow_started_at = time.monotonic()
+                timed_phase, timed_override = timed_shadow_steer(
+                    time.monotonic() - timed_shadow_started_at,
+                    float(shadow_cfg.get("max_steer_rad", 0.22)),
+                )
+            else:
+                if gps_mode == "GPS":
+                    timed_shadow_started_at = None
+                timed_phase, timed_override = "OFF", None
             lane_age_sec = (max(0.0, time.time()-lane_updated_at)
                             if lane_updated_at > 0.0 else float("inf"))
             lane_fresh = bool(
@@ -769,7 +789,13 @@ def main():
                     if static_fresh and not static_plan["zone_active"]:
                         static_state = "ZONE_MISMATCH"
                 elif static_state == "AVOIDING":
-                    if shadow_active and not static_plan.get("shadow_wall_verified", False):
+                    if args.shadow_timed_steer and shadow_active:
+                        # Do not follow an LiDAR detour when the explicit timed
+                        # camera-steering experiment is selected. But do NOT
+                        # ignore the obstacle: stop rather than steer blindly.
+                        static_stop = True
+                        static_state = "TIMED_SHADOW_OBSTACLE_STOP"
+                    elif shadow_active and not static_plan.get("shadow_wall_verified", False):
                         # Mandatory positive verification by current LiDAR scan.
                         static_stop = True
                         static_state = "SHADOW_WALL_NOT_VERIFIED"
@@ -812,6 +838,18 @@ def main():
                 # original LiDAR local route to override lane-vision dropout;
                 # GPS/DR expiry, too much path drift, and LiDAR STOP still win.
                 shadow_stop = False
+
+            if args.shadow_timed_steer and shadow_active:
+                # Only override steering with valid live camera and no STOP;
+                # a fixed steer is not a verified lane-change trajectory.
+                target_speed_kmh = min(target_speed_kmh, 5.0)
+                if (timed_override is not None and lane_fresh
+                        and gps_mode == 'SHADOW' and not static_stop
+                        and not pedestrian_stop):
+                    steering = timed_override
+                    mission['reasons'].append('timed_shadow_' + timed_phase.lower())
+                else:
+                    mission['reasons'].append('timed_shadow_' + timed_phase.lower())
 
             if shadow_active:
                 # GPS-shadow requires independent, recent 3D LiDAR evidence
@@ -975,6 +1013,8 @@ def main():
                   f" / outage={shadow_sec:.1f}s")
             print(f"LANE        : fresh={lane_fresh} conf={lane_result['confidence']:.2f}"
                   f" steer={lane_result['steering']:.3f} / SHADOW_STOP={shadow_stop}")
+            if args.shadow_timed_steer:
+                print(f"TIMED SHADOW: {timed_phase} / override={timed_override}")
             print(
                 f"POSITION    : x={current_x:.3f}, y={current_y:.3f}"
             )
