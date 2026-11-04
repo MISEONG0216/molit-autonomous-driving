@@ -2,7 +2,9 @@
 
 This is NOT an obstacle detector. It rejects near-center returns, tolerates
 at most a few isolated FAR-center returns (typical sparse wall/noise), and
-requires observed side sectors. The independent LiDAR emergency and dynamic
+requires at least one observed side sector during post-detour handoff.
+Missing the opposite wall does not itself prove an obstacle; the independent
+LiDAR emergency and dynamic
 object checks in the worker are always evaluated separately.
 """
 import numpy as np
@@ -51,9 +53,17 @@ def evaluate_handoff_clearance(vehicle_points, cfg):
         report["reason"] = "NEAR_CENTER_RETURN"
     elif far_hits > max_far:
         report["reason"] = "FAR_CENTER_RETURNS"
-    elif min(left, right) < support_min:
-        report["reason"] = "SIDE_OBSERVATION_INSUFFICIENT"
+    elif max(left, right) < support_min:
+        # No reliable side reference on EITHER side: keep fail-stop.
+        report["reason"] = "BOTH_SIDES_UNOBSERVED"
     else:
         report["verified"] = True
-        report["reason"] = "FAR_SPARSE_RETURNS_TOLERATED" if far_hits else "CLEAR"
+        if min(left, right) < support_min:
+            # In a tunnel one wall may leave the LiDAR ROI while the
+            # centre corridor stays clear. Advisory, not an obstruction.
+            report["reason"] = "ONE_SIDE_OBSERVED_FORWARD_CLEAR"
+        else:
+            report["reason"] = (
+                "FAR_SPARSE_RETURNS_TOLERATED" if far_hits else "CLEAR"
+            )
     return report
