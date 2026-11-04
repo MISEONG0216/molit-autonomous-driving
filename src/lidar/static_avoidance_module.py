@@ -230,6 +230,7 @@ def main():
             # Keep a route accepted inside the zone until geometric release.
             planner_enabled = bool(inside_zone or latch.active)
             shadow_verified = False
+            forward_clear_verified = False
             if not planner_enabled:
                 # Suppress detection, tracking and path generation elsewhere.
                 obstacles, tracked = [], []
@@ -250,6 +251,37 @@ def main():
                 forward, left, delta_yaw = delta_ego(previous_pose, pose)
                 previous_pose = pose
                 vehicle_points = lidar_to_vehicle(points)
+                if gps_shadow:
+                    # Positive forward corridor evidence; an empty scan alone
+                    # is NOT proof of free space. Require side observations
+                    # and no observed returns in the ego footprint up to 12m.
+                    cloud = np.asarray(vehicle_points, dtype=float)
+                    finite_cloud = cloud[
+                        np.isfinite(cloud).all(axis=1)
+                    ]
+                    roi = finite_cloud[
+                        (finite_cloud[:, 0] >= 1.0)
+                        & (finite_cloud[:, 0] <= 12.0)
+                        & (finite_cloud[:, 2] >= float(ego_cfg.get("z_min", -1.45)))
+                        & (finite_cloud[:, 2] <= float(ego_cfg.get("z_max", 1.25)))
+                    ]
+                    half = (float(ego_cfg.get("vehicle_half_width_m", 0.9))
+                            + float(ego_cfg.get("margin_m", 0.45)))
+                    central_hits = np.count_nonzero(
+                        np.abs(roi[:, 1]) <= half
+                    )
+                    left_support = np.count_nonzero(
+                        (roi[:, 0] >= 4.0) & (roi[:, 1] >= half)
+                        & (roi[:, 1] <= 7.0)
+                    )
+                    right_support = np.count_nonzero(
+                        (roi[:, 0] >= 4.0) & (roi[:, 1] <= -half)
+                        & (roi[:, 1] >= -7.0)
+                    )
+                    forward_clear_verified = bool(
+                        len(roi) >= 80 and central_hits == 0
+                        and left_support >= 8 and right_support >= 8
+                    )
                 obstacles, _, _ = detector.detect(vehicle_points)
                 tracked = tracker.update(
                     obstacles, dt, delta_x=forward, delta_y=left, delta_yaw=delta_yaw
@@ -544,6 +576,7 @@ def main():
                 "latch_active": bool(latch.active) if not gps_shadow else bool(shadow_side),
                 "zone_active": zone_active,
                 "shadow_wall_verified": bool(gps_shadow and shadow_verified and status == "AVOIDING"),
+                "forward_clear_verified": bool(gps_shadow and forward_clear_verified),
             }
             data = json.dumps(packet, separators=(",", ":"), allow_nan=False).encode("utf-8")
             if len(data) > 60000:
