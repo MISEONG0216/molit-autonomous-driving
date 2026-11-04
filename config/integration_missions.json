@@ -114,7 +114,20 @@
     "zone_note": "User-confirmed by manual MORAI waypoint survey: pedestrian/dynamic-obstacle mission WP720-1050. WP720-760 overlaps static-avoidance zone WP590-760; both safety constraints may apply in that overlap.",
     "note": "Observe forward camera YOLO person(0) + MiDaS risk from provided script; stop in zone when risk>=0.50. No direct controls from vision worker. Fail stop on missing/stale results while active. Other detected COCO vehicle classes are display-only.",
     "prewarm_wp": 70,
-    "prewarm_result_age_sec": 1
+    "prewarm_result_age_sec": 1,
+    "crossing_speed_zones": [
+      [
+        880,
+        899,
+        12
+      ],
+      [
+        900,
+        940,
+        5
+      ]
+    ],
+    "crossing_speed_note": "User-reported pedestrian crossing WP900-940: pre-brake WP880-899 to <=12km/h, WP900-940 to <=5km/h. Keep person detection STOP and stale-data STOP active; requires valid GPS/wp."
   },
   "highway_follow": {
     "zones_wp": [
@@ -145,7 +158,13 @@
     "prewarm_wp": 70,
     "prewarm_result_age_sec": 1,
     "lost_vehicle_hold_sec": 0.8,
-    "near_roi_note": "Full-frame near-field trapezoid with overlap-based selection, hood crop 0.98 in follow mode; retains last close-vehicle risk for <=0.8s then fades by 1.6s. Not calibrated distance or collision prevention."
+    "near_roi_note": "Full-frame near-field trapezoid with overlap-based selection, hood crop 0.98 in follow mode; retains last close-vehicle risk for <=0.8s then fades by 1.6s. Not calibrated distance or collision prevention.",
+    "unverified_distance_max_kmh": 35,
+    "visible_vehicle_cap_kmh": 18,
+    "front_vehicle_caution_risk": 0.15,
+    "caution_vehicle_cap_kmh": 8,
+    "front_vehicle_stop_risk": 0.35,
+    "conservative_front_car_note": "MORAI supervised experiment. YOLO/MiDaS risk score is uncalibrated image-space proxy, not distance/TTC. Fresh data required in highway follow zones; if stale, full stop. Restrict unverified-distance highway max 35km/h. Any in-lane detected car caps 18km/h; risk >=0.15 caps 8; risk >=0.35 requests full brake. More sensitive can cause false stops. Does NOT guarantee collision avoidance; requires staged validation."
   },
   "gps_shadow": {
     "enabled_by_launch": true,
