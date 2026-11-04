@@ -140,6 +140,12 @@ def main():
     threshold = float(mission.get("stop_risk_threshold", 0.50))
     if not 0 < threshold <= 1:
         raise ValueError("stop_risk_threshold must be in (0,1]")
+    pedestrian_roi = mission.get("horizontal_roi_ratio", [0.20, 0.80])
+    if (not isinstance(pedestrian_roi, list) or len(pedestrian_roi) != 2
+            or not 0 <= float(pedestrian_roi[0]) < float(pedestrian_roi[1]) <= 1):
+        raise ValueError("horizontal_roi_ratio must be [left,right] within [0,1]")
+    pedestrian_roi_left, pedestrian_roi_right = map(float, pedestrian_roi)
+    print(f"[PEDESTRIAN ROI] center {pedestrian_roi_left:.0%}-{pedestrian_roi_right:.0%} of image width; highway vehicle ROI unchanged")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[PEDESTRIAN] device={device} loading source YOLOv8n + MiDaS_small")
@@ -309,9 +315,16 @@ def main():
             for idx, (x1, y1, x2, y2, conf, cls) in enumerate(detections):
                 # The supplied trapezoid filters objects by their bounding-box
                 # bottom center. Neither risk nor drawing includes adjacent lanes.
-                if follow_enabled and (
-                    cls not in VEHICLE_CLASSES
-                    or not vehicle_overlaps_lane(x1, y1, x2, y2, w, h)
+                # Restrict only pedestrian STOP detection to the central
+                # horizontal 60% (box centre); highway vehicle coverage stays
+                # unchanged on this shared camera feed.
+                if cls == 0 and not (
+                    pedestrian_roi_left <= ((x1 + x2) * 0.5 / w)
+                    <= pedestrian_roi_right
+                ):
+                    continue
+                if follow_enabled and cls in VEHICLE_CLASSES and (
+                    not vehicle_overlaps_lane(x1, y1, x2, y2, w, h)
                 ):
                     continue
                 # Align approach-area history with *filtered* in-lane boxes,
@@ -405,6 +418,11 @@ def main():
                         f"{decision} | person={persons} risk={max_person_risk:.2f}")
                 if follow_enabled:
                     cv2.polylines(frame, [lane_poly], True, (255, 255, 0), 2)
+                if ped_enabled:
+                    xlo = int(w * pedestrian_roi_left)
+                    xhi = int(w * pedestrian_roi_right)
+                    cv2.line(frame, (xlo, 0), (xlo, h - 1), (255, 255, 0), 2)
+                    cv2.line(frame, (xhi, 0), (xhi, h - 1), (255, 255, 0), 2)
                 cv2.putText(frame, text, (20, 35),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.70,
                             (0, 0, 255) if stop and ped_enabled else (0, 255, 0), 2)
