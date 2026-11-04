@@ -36,7 +36,8 @@ from integration.static_avoidance_io import configured_avoidance_speed_kmh
 from static_avoidance_path_latch import AvoidancePathLatch
 from shadow_wall_guard import pick_shadow_detour, check_wall_clearance, close_forward_collision
 from shadow_ego_planner import choose_local_detour
-from shadow_predefined_templates import choose_template_detour
+from shadow_predefined_templates import (choose_template_detour,
+                                         plan_second_verified_return)
 
 NETWORK_FILE = ROOT / "config" / "integration_network.json"
 GLOBAL_PATH_FILE = ROOT / "path" / "2026_molit_comp_global_path.txt"
@@ -168,6 +169,8 @@ def main():
     shadow_plan_last_report = None
     template_completed_count = 0
     template_active_id = None
+    template_outbound_offset = None
+    second_match_streak = 0
     shadow_was_active = False
 
     print("[STATIC ZONES] " + str(static_zones))
@@ -233,6 +236,8 @@ def main():
             if not gps_shadow and shadow_was_active:
                 template_completed_count = 0
                 template_active_id = None
+                template_outbound_offset = None
+                second_match_streak = 0
             shadow_was_active = gps_shadow
             # During a GPS blackout, any road obstacle may need the original
             # static planner. The main still imposes a strict shadow speed cap
@@ -313,19 +318,53 @@ def main():
                             ]
                             if len(front) < int(ego_cfg.get(
                                     "release_max_front_points", 5)):
-                                if template_active_id is not None:
-                                    template_completed_count += 1
-                                    print("[TEMPLATE COMPLETED] {} completed={}".format(
-                                        template_active_id, template_completed_count), flush=True)
-                                    template_active_id = None
-                                shadow_locked_path = None
-                                shadow_side = None
-                                plan = PlanResult(
-                                    "CLEAR", np.empty((0, 3)), None, None,
-                                    0.0, "EGO_DETOUR_TAIL_RELEASE"
-                                )
-                                shadow_verified = False
-                                latch_state = "EGO_LIDAR_TAIL_RELEASED"
+                                if template_active_id == "SECOND_RIGHT":
+                                    # RIGHT HOLD has finished; NEVER switch to
+                                    # camera or falsely count mission done.
+                                    # Start a short separate LEFT return only
+                                    # after a NEW measured LiDAR swept-path
+                                    # check. Otherwise issue STOP_REQUIRED.
+                                    ret = plan_second_verified_return(
+                                        vehicle_points, template_cfg,
+                                        (ego_x, ego_y, ego_yaw), wall_cfg,
+                                        template_outbound_offset)
+                                    if ret["status"] == "AVOIDING":
+                                        shadow_locked_path = np.asarray(
+                                            ret["path"], dtype=float)
+                                        shadow_side = 1
+                                        template_active_id = "SECOND_RETURN"
+                                        plan = PlanResult(
+                                            "AVOIDING", shadow_locked_path,
+                                            None, "LEFT",
+                                            float(ego_cfg.get("avoidance_speed_kmh", 5.0)),
+                                            "SECOND_VERIFIED_RETURN")
+                                        shadow_verified = True
+                                        latch_state = "EGO_LIDAR_NEW_SECOND_RETURN"
+                                        print("[V49 RETURN] LiDAR-verified LEFT merge-back selected", flush=True)
+                                    else:
+                                        plan = PlanResult(
+                                            "STOP_REQUIRED", np.empty((0,3)),
+                                            None, None, 0.0, ret["reason"])
+                                        shadow_verified = False
+                                        latch_state = "SECOND_RETURN_WAIT_" + ret["reason"]
+                                        if scan_count % 5 == 0:
+                                            print("[V49 RETURN] STOP {} {}".format(
+                                                ret["reason"], ret.get("diagnostics")), flush=True)
+                                else:
+                                    if template_active_id is not None:
+                                        template_completed_count += 1
+                                        print("[TEMPLATE COMPLETED] {} completed={}".format(
+                                            template_active_id, template_completed_count), flush=True)
+                                        template_active_id = None
+                                        template_outbound_offset = None
+                                    shadow_locked_path = None
+                                    shadow_side = None
+                                    plan = PlanResult(
+                                        "CLEAR", np.empty((0, 3)), None, None,
+                                        0.0, "EGO_DETOUR_TAIL_RELEASE"
+                                    )
+                                    shadow_verified = False
+                                    latch_state = "EGO_LIDAR_TAIL_RELEASED"
                             else:
                                 plan = PlanResult(
                                     "STOP_REQUIRED", np.empty((0,3)), None,
@@ -402,10 +441,31 @@ def main():
                             vehicle_points, template_cfg, template_completed_count
                         ) if template_cfg.get("enabled", False) else
                             choose_local_detour(vehicle_points, ego_cfg))
+                        # Confirm SECOND survey geometry in successive fresh
+                        # LiDAR scans; the first (successful) LEFT template is
+                        # deliberately untouched. Never issue a path from a
+                        # single false-positive pattern match.
+                        if (template_cfg.get("enabled", False) and
+                                template_completed_count == 1 and
+                                template_cfg.get("second_survey_match", {}).get(
+                                    "enabled", False)):
+                            if local.get("match", False):
+                                second_match_streak += 1
+                            else:
+                                second_match_streak = 0
+                            required = int(template_cfg[
+                                "second_survey_match"].get("confirmation_scans", 2))
+                            if (local["status"] == "AVOIDING" and
+                                    second_match_streak < required):
+                                local = dict(local, status="STOP_REQUIRED",
+                                             path=[], reason="SECOND_MATCH_CONFIRMING")
+                            if second_match_streak >= required and scan_count % 10 == 0:
+                                print("[V49 MATCH] confirmed={} required={} reason={}".format(
+                                    second_match_streak, required, local["reason"]), flush=True)
                         report = (local["status"], local["reason"])
                         if report != shadow_plan_last_report or scan_count % 25 == 0:
                             print(
-                                "[SHADOW V48] scan={} result={} reason={}".format(
+                                "[SHADOW V49] scan={} result={} reason={}".format(
                                     scan_count, local["status"], local["reason"]
                                 )
                             )
@@ -453,6 +513,9 @@ def main():
                             )
                             if template_cfg.get("enabled", False):
                                 template_active_id = local.get("template_id")
+                                if template_active_id == "SECOND_RIGHT":
+                                    template_outbound_offset = float(
+                                        local["selected_offset_m"])
                                 print("[TEMPLATE SELECTED] {} side={} offset={}m delay={}m".format(
                                     template_active_id,
                                     "LEFT" if local["side"] == 1 else "RIGHT",
