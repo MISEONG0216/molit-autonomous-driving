@@ -129,10 +129,10 @@
       [
         900,
         940,
-        8
+        20
       ]
     ],
-    "crossing_speed_note": "Pedestrian crossing WP900-940: pre-brake WP820-879 cap20km/h, WP880-899 cap10km/h; WP900-940 cap8km/h (raised from 5). Keep pedestrian STOP and stale-perception STOP; validate in MORAI at low speed. GPS WP gate must be valid.",
+    "crossing_speed_note": "Pedestrian crossing WP900-940: pre-brake WP820-879 cap20km/h, WP880-899 cap10km/h; WP900-940 cap20km/h (raised from 8). Preserve pedestrian camera ROI center 60%, pedestrian STOP and stale-perception STOP. 20km/h is not collision validated: supervised MORAI testing and stopping distance checks necessary.",
     "horizontal_roi_ratio": [
       0.2,
       0.8
