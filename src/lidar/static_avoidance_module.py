@@ -36,6 +36,7 @@ from integration.static_avoidance_io import configured_avoidance_speed_kmh
 from static_avoidance_path_latch import AvoidancePathLatch
 from shadow_wall_guard import pick_shadow_detour, check_wall_clearance, close_forward_collision
 from shadow_ego_planner import choose_local_detour
+from shadow_predefined_templates import choose_template_detour
 
 NETWORK_FILE = ROOT / "config" / "integration_network.json"
 GLOBAL_PATH_FILE = ROOT / "path" / "2026_molit_comp_global_path.txt"
@@ -99,6 +100,7 @@ def main():
     static_cfg = missions.get("static", {})
     wall_cfg = missions.get("gps_shadow_wall_guard", {})
     ego_cfg = missions.get("gps_shadow_ego_planner", {})
+    template_cfg = json.loads((ROOT / "config" / "tunnel_predefined_templates.json").read_text(encoding="utf-8"))
     static_zones = load_static_zones(static_cfg, len(path))
     avoidance_speed_kmh = configured_avoidance_speed_kmh(static_cfg)
 
@@ -164,6 +166,9 @@ def main():
     shadow_side = None
     shadow_locked_path = None
     shadow_plan_last_report = None
+    template_completed_count = 0
+    template_active_id = None
+    shadow_was_active = False
 
     print("[STATIC ZONES] " + str(static_zones))
     print(f"[STATIC AVOID SPEED] {avoidance_speed_kmh:.1f} km/h")
@@ -224,6 +229,11 @@ def main():
             waypoint_index = nearest_index(path, ego_x, ego_y)
             inside_zone = (in_static_zone(waypoint_index, static_zones)
                            or gps_shadow)
+            # Template sequence is per continuous GPS-shadow interval.
+            if not gps_shadow and shadow_was_active:
+                template_completed_count = 0
+                template_active_id = None
+            shadow_was_active = gps_shadow
             # During a GPS blackout, any road obstacle may need the original
             # static planner. The main still imposes a strict shadow speed cap
             # and a short dead-reckoning expiry fail-stop.
@@ -303,6 +313,11 @@ def main():
                             ]
                             if len(front) < int(ego_cfg.get(
                                     "release_max_front_points", 5)):
+                                if template_active_id is not None:
+                                    template_completed_count += 1
+                                    print("[TEMPLATE COMPLETED] {} completed={}".format(
+                                        template_active_id, template_completed_count), flush=True)
+                                    template_active_id = None
                                 shadow_locked_path = None
                                 shadow_side = None
                                 plan = PlanResult(
@@ -383,7 +398,10 @@ def main():
                                 shadow_verified = False
                                 latch_state = "EGO_LIDAR_BLOCKED_"+reason
                     if shadow_locked_path is None and latch_state != "EGO_LIDAR_TAIL_RELEASED":
-                        local = choose_local_detour(vehicle_points, ego_cfg)
+                        local = (choose_template_detour(
+                            vehicle_points, template_cfg, template_completed_count
+                        ) if template_cfg.get("enabled", False) else
+                            choose_local_detour(vehicle_points, ego_cfg))
                         report = (local["status"], local["reason"])
                         if report != shadow_plan_last_report or scan_count % 25 == 0:
                             print(
@@ -433,6 +451,13 @@ def main():
                                 ),
                                 flush=True,
                             )
+                            if template_cfg.get("enabled", False):
+                                template_active_id = local.get("template_id")
+                                print("[TEMPLATE SELECTED] {} side={} offset={}m delay={}m".format(
+                                    template_active_id,
+                                    "LEFT" if local["side"] == 1 else "RIGHT",
+                                    local.get("selected_offset_m"),
+                                    local.get("selected_return_delay_m")), flush=True)
                             shadow_side = local["side"]
                             xy = np.asarray(local["path"], dtype=float)
                             cy, sy = math.cos(ego_yaw), math.sin(ego_yaw)
