@@ -400,7 +400,8 @@ def main():
                                         "hits={} min={:.2f}m "
                                         "ENTER={} PASS={} RETURN={} "
                                         "stage_min={} "
-                                        "shift={:.1f}m return={:.1f}-{:.1f}m".format(
+                                        "shift={:.1f}m return={:.1f}-{:.1f}m "
+                                        "delay={:.1f}m observed={}".format(
                                             detail["side"], detail["offset_m"],
                                             detail["reason"],
                                             " [DIAGNOSTIC ONLY]" if detail.get(
@@ -414,6 +415,8 @@ def main():
                                             detail["shift_end_m"],
                                             detail["return_start_m"],
                                             detail["return_end_m"],
+                                            detail.get("return_delay_m", 0.0),
+                                            detail.get("visibility_ok", False),
                                         )
                                     )
                                 else:
