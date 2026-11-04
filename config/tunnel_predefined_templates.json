@@ -91,5 +91,13 @@
     "near_unmatched_stop_m": 8,
     "require_end_observations_per_side": 3,
     "notes": "Second obstacle scan was measured in a separate stationary ego frame. Match observed 2D obstacle shape near 17.5 m, not absolute waypoint/GPS. Right shift holds to 23 m with zero hits, both observed lateral sectors and observed far-end. Only after that movement passes its LiDAR-reviewed tail can a separate leftward return be considered; STOP if unverified. Camera normal lane tracking otherwise."
+  },
+  "first_left_hold": {
+    "enabled": true,
+    "hold_after_obstacle_m": 3,
+    "min_hold_endpoint_m": 17,
+    "max_hold_endpoint_m": 20,
+    "hold_extra_visible_m": 3,
+    "notes": "First LEFT uses the original entry curvature and offset but holds lateral position past obstacle rather than forced right return. LiDAR swept path, side wall and endpoint observation must still all pass before route activation."
   }
 }
