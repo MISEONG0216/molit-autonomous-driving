@@ -44,10 +44,28 @@ class V50Tests(unittest.TestCase):
         self.assertFalse(d["verified"])
         self.assertEqual(d["reason"], "NEAR_CENTER_RETURN")
 
-    def test_missing_side_blocks(self):
+    def test_one_side_missing_no_longer_stops_if_forward_clear(self):
         d = evaluate_handoff_clearance(cloud(right=0, far=1), CFG)
+        self.assertTrue(d["verified"], d)
+        self.assertEqual(d["reason"], "ONE_SIDE_OBSERVED_FORWARD_CLEAR")
+
+    def test_both_sides_missing_blocks(self):
+        # Valid wide LiDAR ROI, but neither lateral wall sector is observed.
+        wide = np.array([(float(x), 8.5, 0.0)
+                         for x in np.linspace(1., 12., 100)])
+        d = evaluate_handoff_clearance(wide, CFG)
         self.assertFalse(d["verified"])
-        self.assertEqual(d["reason"], "SIDE_OBSERVATION_INSUFFICIENT")
+        self.assertEqual(d["reason"], "BOTH_SIDES_UNOBSERVED")
+
+    def test_one_side_missing_does_not_bypass_near_obstacle(self):
+        d = evaluate_handoff_clearance(cloud(right=0, near=1), CFG)
+        self.assertFalse(d["verified"])
+        self.assertEqual(d["reason"], "NEAR_CENTER_RETURN")
+
+    def test_one_side_missing_does_not_bypass_far_obstacle(self):
+        d = evaluate_handoff_clearance(cloud(right=0, far=3), CFG)
+        self.assertFalse(d["verified"])
+        self.assertEqual(d["reason"], "FAR_CENTER_RETURNS")
 
     def test_sparse_cloud_blocks(self):
         d = evaluate_handoff_clearance(np.array([[8., 0., 0.]]), CFG)
