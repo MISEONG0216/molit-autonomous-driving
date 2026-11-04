@@ -36,8 +36,8 @@ def cloud(left_wall=5.0, right_wall=-2.0, wall_end=28.0,
 
 class AdaptiveReturnTests(unittest.TestCase):
     def test_multiple_return_times_configured(self):
-        self.assertEqual(CFG["return_delay_options_m"], [0, 1.5, 3])
-        self.assertEqual(CFG["candidate_offsets_m"], [1.6, 2, 2.4, 2.8])
+        self.assertEqual(CFG["return_delay_options_m"], [0, 0.5, 1, 1.5, 2, 2.5, 3])
+        self.assertEqual(CFG["candidate_offsets_m"], [1.6, 1.8, 2, 2.2, 2.4, 2.6, 2.8])
         self.assertEqual(CFG["diagnostic_offsets_m"], [2.9, 3, 3.1, 3.2])
 
     def test_first_left_avoidance_remains(self):
