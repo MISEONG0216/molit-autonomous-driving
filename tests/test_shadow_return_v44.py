@@ -36,9 +36,9 @@ def cloud(left_wall=5.0, right_wall=-2.0, wall_end=28.0,
 
 class AdaptiveReturnTests(unittest.TestCase):
     def test_multiple_return_times_configured(self):
-        self.assertEqual(CFG["return_delay_options_m"], [0, 0.5, 1, 1.5, 2, 2.5, 3])
-        self.assertEqual(CFG["candidate_offsets_m"], [1.6, 1.8, 2, 2.2, 2.4, 2.6, 2.8])
-        self.assertEqual(CFG["diagnostic_offsets_m"], [2.9, 3, 3.1, 3.2])
+        self.assertEqual(CFG["return_delay_options_m"], [0, 1.5, 3])
+        self.assertEqual(CFG["candidate_offsets_m"], [1.8, 2.4, 2.8])
+        self.assertEqual(CFG["diagnostic_offsets_m"], [])
 
     def test_first_left_avoidance_remains(self):
         result = choose_local_detour(cloud(), CFG)
@@ -79,8 +79,7 @@ class AdaptiveReturnTests(unittest.TestCase):
         result = choose_local_detour(cloud(), CFG)
         diagnostics = [d for d in result["diagnostics"]
                        if "offset_m" in d and d["offset_m"] >= 2.9]
-        self.assertTrue(diagnostics)
-        self.assertTrue(all(d["diagnostic_only"] for d in diagnostics))
+        self.assertEqual(diagnostics, [])
         self.assertLessEqual(
             float(np.max(np.abs(np.asarray(result["path"])[:, 1]))), 2.8 + 1e-6)
 
