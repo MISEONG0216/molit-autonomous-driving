@@ -31,11 +31,11 @@ def sample_cloud(observe_left=True):
 
 
 class V46Tests(unittest.TestCase):
-    def test_seven_by_seven_offsets_and_delays(self):
-        self.assertEqual(len(CFG["candidate_offsets_m"]), 7)
-        self.assertEqual(len(CFG["return_delay_options_m"]), 7)
+    def test_three_by_three_offsets_and_delays(self):
+        self.assertEqual(len(CFG["candidate_offsets_m"]), 3)
+        self.assertEqual(len(CFG["return_delay_options_m"]), 3)
         self.assertEqual(len(CFG["candidate_offsets_m"]) *
-                         len(CFG["return_delay_options_m"]) * 2, 98)
+                         len(CFG["return_delay_options_m"]) * 2, 18)
         self.assertEqual(CFG["allowed_points"], 0)
         self.assertEqual(CFG["avoidance_speed_kmh"], 5)
 
