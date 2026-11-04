@@ -99,7 +99,6 @@ def main():
     static_cfg = missions.get("static", {})
     wall_cfg = missions.get("gps_shadow_wall_guard", {})
     ego_cfg = missions.get("gps_shadow_ego_planner", {})
-    commit_locked_detour = ego_cfg.get("commit_locked_path_despite_new_hazards", False) is True
     static_zones = load_static_zones(static_cfg, len(path))
     avoidance_speed_kmh = configured_avoidance_speed_kmh(static_cfg)
 
@@ -164,10 +163,10 @@ def main():
     shadow_verified = False
     shadow_side = None
     shadow_locked_path = None
+    shadow_plan_last_report = None
 
     print("[STATIC ZONES] " + str(static_zones))
     print(f"[STATIC AVOID SPEED] {avoidance_speed_kmh:.1f} km/h")
-    print(f"[SHADOW LOCKED DETOUR] committed-route experimental mode={commit_locked_detour}")
     print("[STATIC WORKER] LiDAR -> detect -> track -> local path -> UDP result")
     print("[CONTROL] No EgoCtrlCmd sender in this process.")
     print(f"[LIDAR] {lidar_ip}:{lidar_port}")
@@ -259,6 +258,12 @@ def main():
                     tracked, ego_x=ego_x, ego_y=ego_y, ego_yaw=ego_yaw, confidence=1.0
                 )
                 if gps_shadow:
+                    # This is a per-scan result state, not a persistent latch.
+                    # After a route is released, skip replanning ONLY on that
+                    # scan; on the following LiDAR scan assess fresh obstacles.
+                    # Without this reset, EGO_LIDAR_TAIL_RELEASED survives
+                    # forever and silently disables all future detours.
+                    latch_state = "SHADOW_SCAN_PENDING"
                     # Create a vehicle-frame detour ONCE. Lock the selected
                     # maneuver to avoid adding a new 1.6m lateral shift on
                     # EVERY scan (which previously drove into tunnel walls).
@@ -318,7 +323,11 @@ def main():
                             # Revalidate the REMAINING locked route against
                             # the newest vehicle-frame wall returns. Aborting
                             # is safer than swapping sides mid-avoidance.
-                            remaining = shadow_locked_path[nearest:]
+                            # Retain the segment immediately BEFORE the
+                            # nearest waypoint. Otherwise slicing at nearest
+                            # may discard the segment the ego is actually on,
+                            # causing a false alignment failure near turns.
+                            remaining = shadow_locked_path[max(0, nearest - 1):]
                             # The original V34 checker required >=6m of
                             # remaining route and would STOP permanently near
                             # the endpoint. Scale required lookahead to actual
@@ -332,16 +341,30 @@ def main():
                             remaining_cfg["minimum_path_ahead_m"] = min(
                                 6.0, max(1.0, remaining_forward - 1.5)
                             )
-                            if commit_locked_detour:
-                                # Experimental: follow an ALREADY VERIFIED and
-                                # latched route without rechecking new LiDAR
-                                # obstacles/walls on every subsequent scan.
-                                # Initial detour selection remains unchanged.
-                                wall_ok, reason = True, "COMMITTED_PATH"
-                            else:
-                                wall_ok, reason = check_wall_clearance(
-                                    remaining, (ego_x, ego_y, ego_yaw),
-                                    vehicle_points, remaining_cfg
+                            alignment = {}
+                            wall_ok, reason = check_wall_clearance(
+                                remaining, (ego_x, ego_y, ego_yaw),
+                                vehicle_points, remaining_cfg,
+                                alignment_diagnostics=alignment,
+                            )
+                            if alignment and (not wall_ok or scan_count % 20 == 0):
+                                print(
+                                    "[SHADOW ALIGN] scan={} status={} "
+                                    "segment_error={:.3f}m vertex_error={:.3f}m "
+                                    "limit={:.2f}m seg={} "
+                                    "forward={:.2f}m left={:.2f}m "
+                                    "reason={} (DR pose, not absolute localization accuracy)".format(
+                                        scan_count,
+                                        "PASS" if wall_ok else "REJECT",
+                                        alignment["segment_error_m"],
+                                        alignment["vertex_error_m"],
+                                        alignment["alignment_limit_m"],
+                                        alignment["nearest_segment_index"],
+                                        alignment["nearest_segment_forward_m"],
+                                        alignment["nearest_segment_left_m"],
+                                        reason,
+                                    ),
+                                    flush=True,
                                 )
                             if wall_ok:
                                 plan = PlanResult(
@@ -361,8 +384,55 @@ def main():
                                 latch_state = "EGO_LIDAR_BLOCKED_"+reason
                     if shadow_locked_path is None and latch_state != "EGO_LIDAR_TAIL_RELEASED":
                         local = choose_local_detour(vehicle_points, ego_cfg)
+                        report = (local["status"], local["reason"])
+                        if report != shadow_plan_last_report or scan_count % 25 == 0:
+                            print(
+                                "[SHADOW V44] scan={} result={} reason={}".format(
+                                    scan_count, local["status"], local["reason"]
+                                )
+                            )
+                            for detail in local.get("diagnostics", []):
+                                if "offset_m" in detail:
+                                    parts = detail.get("stage_hits", {})
+                                    minimum = detail.get("stage_min_distance_m", {})
+                                    print(
+                                        "[SHADOW CANDIDATE] {} {:.1f}m {}{} "
+                                        "hits={} min={:.2f}m "
+                                        "ENTER={} PASS={} RETURN={} "
+                                        "stage_min={} "
+                                        "shift={:.1f}m return={:.1f}-{:.1f}m "
+                                        "delay={:.1f}m observed={}".format(
+                                            detail["side"], detail["offset_m"],
+                                            detail["reason"],
+                                            " [DIAGNOSTIC ONLY]" if detail.get(
+                                                "diagnostic_only", False) else "",
+                                            detail["hit_points"],
+                                            detail["min_distance_m"],
+                                            parts.get("ENTER", "-"),
+                                            parts.get("PASS", "-"),
+                                            parts.get("RETURN", "-"),
+                                            minimum,
+                                            detail["shift_end_m"],
+                                            detail["return_start_m"],
+                                            detail["return_end_m"],
+                                            detail.get("return_delay_m", 0.0),
+                                            detail.get("visibility_ok", False),
+                                        )
+                                    )
+                                else:
+                                    print("[SHADOW VISIBILITY] {}".format(detail))
+                            shadow_plan_last_report = report
                         shadow_verified = local["status"] == "AVOIDING"
                         if shadow_verified:
+                            print(
+                                "[SHADOW SELECTED] side={} offset={:.1f}m "
+                                "return_delay={:.1f}m (full sweep + observed endpoint)".format(
+                                    "LEFT" if local["side"] == 1 else "RIGHT",
+                                    float(local.get("selected_offset_m", 0.0)),
+                                    float(local.get("selected_return_delay_m", 0.0)),
+                                ),
+                                flush=True,
+                            )
                             shadow_side = local["side"]
                             xy = np.asarray(local["path"], dtype=float)
                             cy, sy = math.cos(ego_yaw), math.sin(ego_yaw)
@@ -394,6 +464,19 @@ def main():
                                 0.0, local["reason"]
                             )
                             latch_state = "EGO_LIDAR_STOP_"+local["reason"]
+                    # Independent short-range emergency guard for the CLEAR
+                    # state. A planner defect or a stale one-scan tail release
+                    # must not permit continued lane driving into close returns.
+                    # An already verified AVOIDING path keeps its separate
+                    # full swept-path revalidation.
+                    if (plan.status == "CLEAR" and
+                            close_forward_collision(vehicle_points, wall_cfg)):
+                        plan = PlanResult(
+                            "STOP_REQUIRED", np.empty((0, 3)), None,
+                            None, 0.0, "SHADOW_CLOSE_FORWARD_STOP"
+                        )
+                        shadow_verified = False
+                        latch_state = "EGO_LIDAR_EMERGENCY_FORWARD_STOP"
                     raw_plan = plan
                 else:
                     # GPS is valid: preserve original global static planner.
@@ -408,7 +491,7 @@ def main():
 
                 # Preserve original LiDAR dynamic tracking in the shadow;
                 # do not try to pass a moving person or vehicle.
-                if gps_shadow and not (commit_locked_detour and shadow_locked_path is not None):
+                if gps_shadow:
                     for track in tracked:
                         if (bool(getattr(track, "is_dynamic", False))
                                 and 0.0 < float(track.x) < float(
