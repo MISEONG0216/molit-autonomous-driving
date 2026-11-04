@@ -50,6 +50,7 @@ def parse_static_message(raw):
         "zone_active": False,
         "shadow_wall_verified": False,
         "forward_clear_verified": False,
+        "post_detour_handoff": False,
         "latch_active": False,
         "in_static_zone": False,
         "waypoint_index": None,
@@ -83,7 +84,7 @@ def parse_static_message(raw):
         speed = float(value.get("recommended_speed_kmh", 0.0))
         if not math.isfinite(speed) or speed < 0:
             return result
-        for flag in ("zone_active", "latch_active", "in_static_zone", "shadow_wall_verified", "forward_clear_verified"):
+        for flag in ("zone_active", "latch_active", "in_static_zone", "shadow_wall_verified", "forward_clear_verified", "post_detour_handoff"):
             if flag in value and type(value[flag]) is not bool:
                 return result
         worker_wp = value.get("waypoint_index")
@@ -93,6 +94,7 @@ def parse_static_message(raw):
             zone_active=value.get("zone_active", False),
             shadow_wall_verified=value.get("shadow_wall_verified", False),
             forward_clear_verified=value.get("forward_clear_verified", False),
+            post_detour_handoff=value.get("post_detour_handoff", False),
             latch_active=value.get("latch_active", False),
             in_static_zone=value.get("in_static_zone", False),
             waypoint_index=worker_wp,
