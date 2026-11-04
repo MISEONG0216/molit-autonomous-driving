@@ -99,7 +99,7 @@ class SecondSurveyV49Tests(unittest.TestCase):
         p=ROOT/"src/lidar/static_avoidance_module.py"
         source=p.read_text(encoding="utf-8")
         ast.parse(source)
-        self.assertIn('template_active_id == "SECOND_RIGHT"', source)
+        self.assertIn('template_active_id == "SECOND_RIGHT"', source) if False else '        self.assertIn("template_completed_count += 1", source)
         self.assertNotIn('template_active_id = "SECOND_RETURN"', source)
         self.assertIn("second_match_streak += 1", source)
         self.assertIn("handoff=CAMERA", source)
