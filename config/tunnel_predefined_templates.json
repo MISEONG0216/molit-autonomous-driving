@@ -72,8 +72,8 @@
       20
     ],
     "lateral_window_m": [
-      0,
-      4
+      -3.5,
+      4.5
     ],
     "min_points": 8,
     "max_group_forward_span_m": 2.5,
@@ -90,7 +90,15 @@
     "return_endpoint_m": 12,
     "near_unmatched_stop_m": 8,
     "require_end_observations_per_side": 3,
-    "notes": "Second obstacle scan was measured in a separate stationary ego frame. Match observed 2D obstacle shape near 17.5 m, not absolute waypoint/GPS. Right shift holds to 23 m with zero hits, both observed lateral sectors and observed far-end. Only after that movement passes its LiDAR-reviewed tail can a separate leftward return be considered; STOP if unverified. Camera normal lane tracking otherwise."
+    "notes": "Survey second obstacle y shifts with vehicle offset. Match relative to observed left tunnel wall, near x17.5m, for 2 consecutive fresh scans. On no match/mismatch continue CAMERA lane tracking; do not request STOP except if central object enters <8m or a candidate's swept path/visibility is unsafe. Survey wall gap is an estimate requiring MORAI validation.",
+    "left_wall_reference_forward_m": [
+      3,
+      12
+    ],
+    "wall_reference_min_left_m": 2,
+    "min_wall_reference_points": 10,
+    "survey_left_wall_to_obstacle_m": 3.5,
+    "left_wall_gap_tolerance_m": 1.6
   },
   "first_left_hold": {
     "enabled": true,
