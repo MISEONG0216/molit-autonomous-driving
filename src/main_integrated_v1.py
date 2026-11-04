@@ -516,6 +516,13 @@ def main():
                     json.dumps({
                         "x":current_x, "y":current_y, "yaw":yaw,
                         "gps_shadow":bool(shadow_active),
+                        # Use only a fresh, confident camera lane direction
+                        # as an additional LiDAR corridor hypothesis.
+                        "lane_steering": (
+                            float(lane_result["steering"])
+                            if lane_fresh and shadow_active else None
+                        ),
+                        "lane_valid": bool(lane_fresh and shadow_active),
                     }).encode("ascii"),
                     pose_target,
                 )
