@@ -36,6 +36,7 @@ from integration.static_avoidance_io import configured_avoidance_speed_kmh
 from static_avoidance_path_latch import AvoidancePathLatch
 from shadow_wall_guard import pick_shadow_detour, check_wall_clearance, close_forward_collision
 from shadow_ego_planner import choose_local_detour
+from shadow_timed_right_shift import plan_verified_right_shift
 
 NETWORK_FILE = ROOT / "config" / "integration_network.json"
 GLOBAL_PATH_FILE = ROOT / "path" / "2026_molit_comp_global_path.txt"
@@ -99,6 +100,7 @@ def main():
     static_cfg = missions.get("static", {})
     wall_cfg = missions.get("gps_shadow_wall_guard", {})
     ego_cfg = missions.get("gps_shadow_ego_planner", {})
+    right_shift_cfg = missions.get("gps_shadow_right_shift", {})
     static_zones = load_static_zones(static_cfg, len(path))
     avoidance_speed_kmh = configured_avoidance_speed_kmh(static_cfg)
 
@@ -164,6 +166,9 @@ def main():
     shadow_side = None
     shadow_locked_path = None
     shadow_plan_last_report = None
+    first_left_release_at = None
+    timed_right_shift_started = False
+    right_shift_report = None
 
     print("[STATIC ZONES] " + str(static_zones))
     print(f"[STATIC AVOID SPEED] {avoidance_speed_kmh:.1f} km/h")
@@ -303,6 +308,11 @@ def main():
                             ]
                             if len(front) < int(ego_cfg.get(
                                     "release_max_front_points", 5)):
+                                if (shadow_side == 1 and
+                                        first_left_release_at is None and
+                                        not timed_right_shift_started):
+                                    first_left_release_at = time.monotonic()
+                                    print("[RIGHT SHIFT] First LEFT detour released; waiting 5.0s", flush=True)
                                 shadow_locked_path = None
                                 shadow_side = None
                                 plan = PlanResult(
@@ -458,6 +468,45 @@ def main():
                                 "EGO_LIDAR_CLEAR"
                             )
                             latch_state = "EGO_LIDAR_CLEAR"
+                            # One-shot proactive RIGHT lane change, exactly
+                            # 5s after the FIRST left detour's tail release.
+                            # Gate on a fresh CLEAR scan and a fully verified
+                            # current LiDAR sweep. No timer-only steering.
+                            wait_s = float(right_shift_cfg.get("delay_sec", 5.0))
+                            wp_min = int(right_shift_cfg.get("min_wp", 3850))
+                            wp_max = int(right_shift_cfg.get("max_wp", 3970))
+                            if (right_shift_cfg.get("enabled", False) and
+                                    first_left_release_at is not None and
+                                    not timed_right_shift_started and
+                                    time.monotonic() - first_left_release_at >= wait_s and
+                                    wp_min <= waypoint_index <= wp_max):
+                                proposal = plan_verified_right_shift(
+                                    vehicle_points, (ego_x, ego_y, ego_yaw),
+                                    wall_cfg, right_shift_cfg,
+                                )
+                                new_report = proposal["reason"]
+                                if new_report != right_shift_report or scan_count % 25 == 0:
+                                    print(
+                                        "[RIGHT SHIFT] elapsed={:.1f}s wp={} status={} "
+                                        "reason={} candidates={}".format(
+                                            time.monotonic() - first_left_release_at,
+                                            waypoint_index, proposal["status"],
+                                            proposal["reason"], proposal["diagnostics"],
+                                        ), flush=True,
+                                    )
+                                    right_shift_report = new_report
+                                if proposal["status"] == "AVOIDING":
+                                    shadow_locked_path = proposal["path"]
+                                    shadow_side = -1
+                                    timed_right_shift_started = True
+                                    plan = PlanResult(
+                                        "AVOIDING", shadow_locked_path, None,
+                                        "RIGHT",
+                                        float(ego_cfg.get("avoidance_speed_kmh", 5.0)),
+                                        "TIMED_RIGHT_SHIFT_VERIFIED",
+                                    )
+                                    shadow_verified = True
+                                    latch_state = "EGO_LIDAR_NEW_RIGHT_TIMED"
                         else:
                             plan = PlanResult(
                                 "STOP_REQUIRED", np.empty((0,3)), None, None,
@@ -480,6 +529,10 @@ def main():
                     raw_plan = plan
                 else:
                     # GPS is valid: preserve original global static planner.
+                    # Clear timer state on leaving the GPS-shadow mission.
+                    first_left_release_at = None
+                    timed_right_shift_started = False
+                    right_shift_report = None
                     shadow_side = None
                     shadow_locked_path = None
                     raw_plan = planner.plan(
