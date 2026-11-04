@@ -1,40 +1,95 @@
 {
   "enabled": true,
   "mode": "lidar_triggered_fixed_shape",
-  "speed_kmh": 5.0,
-  "lidar_z_range_m": [-1.45, 1.25],
-  "detection_forward_m": [7.0, 12.0],
+  "speed_kmh": 5,
+  "lidar_z_range_m": [
+    -1.45,
+    1.25
+  ],
+  "detection_forward_m": [
+    7,
+    12
+  ],
   "detection_lateral_abs_max_m": 3.5,
   "min_obstacle_points": 5,
   "min_side_points": 8,
   "min_total_points": 80,
-  "max_path_horizon_m": 24.0,
+  "max_path_horizon_m": 24,
   "vehicle_half_width_m": 0.9,
   "safety_margin_m": 0.45,
-  "min_shift_distance_m": 4.0,
+  "min_shift_distance_m": 4,
   "sample_step_m": 0.5,
   "start_shift_m": 1.5,
-  "shift_clearance_before_obstacle_m": 2.0,
+  "shift_clearance_before_obstacle_m": 2,
   "hold_after_obstacle_m": 2.5,
-  "return_length_m": 5.0,
-  "return_delay_options_m": [0.0, 1.5, 3.0],
+  "return_length_m": 5,
+  "return_delay_options_m": [
+    0,
+    1.5,
+    3
+  ],
   "min_return_observation_points_per_side": 3,
-  "return_observation_window_m": 3.0,
+  "return_observation_window_m": 3,
   "templates": [
     {
       "id": "FIRST_LEFT",
       "side": "LEFT",
-      "offset_options_m": [2.4, 2.8],
-      "survey_observed_obstacle_forward_m": [11.4, 14.0],
-      "survey_observed_obstacle_left_m": [-3.2, 0.9]
+      "offset_options_m": [
+        2.4,
+        2.8
+      ],
+      "survey_observed_obstacle_forward_m": [
+        11.4,
+        14
+      ],
+      "survey_observed_obstacle_left_m": [
+        -3.2,
+        0.9
+      ]
     },
     {
       "id": "SECOND_RIGHT",
       "side": "RIGHT",
-      "offset_options_m": [2.4, 2.8],
-      "survey_observed_obstacle_forward_m": [17.4, 17.7],
-      "survey_observed_obstacle_left_m": [0.4, 3.4]
+      "offset_options_m": [
+        2.4,
+        2.8
+      ],
+      "survey_observed_obstacle_forward_m": [
+        17.4,
+        17.7
+      ],
+      "survey_observed_obstacle_left_m": [
+        0.4,
+        3.4
+      ]
     }
   ],
-  "notes": "Survey bounds are approximate observations in DIFFERENT stationary vehicle frames; never join as absolute coordinates. Fixed-shape templates trigger based on NEW LiDAR obstacle observations; keep CAMERA lane tracking elsewhere. Check swept path and both boundaries on every accepted candidate; do not force a turn at waypoint or time. Not yet validated with live MORAI."
+  "notes": "Survey bounds are approximate observations in DIFFERENT stationary vehicle frames; never join as absolute coordinates. Fixed-shape templates trigger based on NEW LiDAR obstacle observations; keep CAMERA lane tracking elsewhere. Check swept path and both boundaries on every accepted candidate; do not force a turn at waypoint or time. Not yet validated with live MORAI. V49: SECOND_RIGHT uses matching against stationary scan, then two separately LiDAR-verified maneuvers; no blind return.",
+  "second_survey_match": {
+    "enabled": true,
+    "forward_window_m": [
+      15,
+      20
+    ],
+    "lateral_window_m": [
+      0,
+      4
+    ],
+    "min_points": 8,
+    "max_group_forward_span_m": 2.5,
+    "target_forward_m": 17.5,
+    "forward_tolerance_m": 2.5,
+    "target_left_center_m": 1.9,
+    "left_tolerance_m": 1.6,
+    "min_lateral_span_m": 1.1,
+    "confirmation_scans": 2,
+    "hold_endpoint_m": 23,
+    "shift_end_m": 9,
+    "return_shift_start_m": 1.5,
+    "return_shift_end_m": 9,
+    "return_endpoint_m": 12,
+    "near_unmatched_stop_m": 8,
+    "require_end_observations_per_side": 3,
+    "notes": "Second obstacle scan was measured in a separate stationary ego frame. Match observed 2D obstacle shape near 17.5 m, not absolute waypoint/GPS. Right shift holds to 23 m with zero hits, both observed lateral sectors and observed far-end. Only after that movement passes its LiDAR-reviewed tail can a separate leftward return be considered; STOP if unverified. Camera normal lane tracking otherwise."
+  }
 }
