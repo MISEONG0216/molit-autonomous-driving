@@ -164,12 +164,12 @@
     "prewarm_result_age_sec": 1,
     "lost_vehicle_hold_sec": 0.8,
     "near_roi_note": "Full-frame near-field trapezoid with overlap-based selection, hood crop 0.98 in follow mode; retains last close-vehicle risk for <=0.8s then fades by 1.6s. Not calibrated distance or collision prevention.",
-    "unverified_distance_max_kmh": 35,
-    "visible_vehicle_cap_kmh": 18,
-    "front_vehicle_caution_risk": 0.15,
-    "caution_vehicle_cap_kmh": 8,
-    "front_vehicle_stop_risk": 0.35,
-    "conservative_front_car_note": "MORAI supervised experiment. YOLO/MiDaS risk score is uncalibrated image-space proxy, not distance/TTC. Fresh data required in highway follow zones; if stale, full stop. Restrict unverified-distance highway max 35km/h. Any in-lane detected car caps 18km/h; risk >=0.15 caps 8; risk >=0.35 requests full brake. More sensitive can cause false stops. Does NOT guarantee collision avoidance; requires staged validation."
+    "unverified_distance_max_kmh": 60,
+    "visible_vehicle_cap_kmh": 40,
+    "front_vehicle_caution_risk": 0.3,
+    "caution_vehicle_cap_kmh": 20,
+    "front_vehicle_stop_risk": 0.55,
+    "conservative_front_car_note": "Intermediate experimental sensitivity vs original graded-only and conservative branch. In active highway follow zones, stale camera still full stop; fresh uncalibrated camera score: capped at 60km/h without detected car; detected front car caps 40km/h; risk >=0.30 caps 20km/h; risk >=0.55 full brake. Values are not distance/TTC; not collision-proof; validate with MORAI at 20km/h before higher speeds."
   },
   "gps_shadow": {
     "enabled_by_launch": true,
