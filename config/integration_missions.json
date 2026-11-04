@@ -129,10 +129,10 @@
       [
         900,
         940,
-        5
+        8
       ]
     ],
-    "crossing_speed_note": "User WP900-940 pedestrian crossing. Early deceleration WP820-879 cap20; WP880-899 cap10; WP900-940 cap5 km/h; pedestrian full stop and stale-data full stop retained. WP gate uses valid GPS path proximity.",
+    "crossing_speed_note": "Pedestrian crossing WP900-940: pre-brake WP820-879 cap20km/h, WP880-899 cap10km/h; WP900-940 cap8km/h (raised from 5). Keep pedestrian STOP and stale-perception STOP; validate in MORAI at low speed. GPS WP gate must be valid.",
     "horizontal_roi_ratio": [
       0.2,
       0.8
