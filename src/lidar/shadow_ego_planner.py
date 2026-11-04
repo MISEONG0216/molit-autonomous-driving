@@ -91,16 +91,37 @@ def choose_local_detour(points, cfg, active_side=None):
     if len(front_close) >= int(cfg.get("obstacle_point_threshold", 5)):
         return dict(fail, reason="IMMEDIATE_OBSTACLE")
 
-    obstacle = pts[
+    # Detect the object within the near window, then extend its observed
+    # forward extent beyond that window. Otherwise a 10-17m long diagonal
+    # vehicle can appear truncated at 12m and the path rejoins too early.
+    central = pts[
         (pts[:, 0] >= float(cfg.get("obstacle_min_forward_m", 3.0))) &
-        (pts[:, 0] <= float(cfg.get("obstacle_max_forward_m", 12.0))) &
+        (pts[:, 0] <= max_horizon) &
         (np.abs(pts[:, 1]) <= clearance)
     ]
-    if len(obstacle) < int(cfg.get("obstacle_point_threshold", 5)) and active_side not in (1, -1):
+    front_seed = central[
+        central[:, 0] <= float(cfg.get("obstacle_max_forward_m", 12.0))
+    ]
+    threshold = int(cfg.get("obstacle_point_threshold", 5))
+    if len(front_seed) < threshold and active_side not in (1, -1):
         return {"status": "CLEAR", "side": None, "path": [],
                 "reason": "EGO_LANE_CLEAR", "diagnostics": []}
-    if len(obstacle) == 0:
+    if len(front_seed) == 0:
         return dict(fail, reason="OBSTACLE_GEOMETRY_UNKNOWN")
+    # Group returns by contiguous forward distance. Far separate obstacles
+    # must not silently be merged with the nearest one; they are still
+    # checked by the swept-corridor collision test for every candidate.
+    central = central[np.argsort(central[:, 0])]
+    gap = float(cfg.get("obstacle_extent_gap_m", 0.8))
+    split = np.flatnonzero(np.diff(central[:, 0]) > gap) + 1
+    groups = np.split(central, split)
+    matching = [group for group in groups
+                if len(group) >= threshold and
+                np.min(group[:, 0]) <= float(cfg.get(
+                    "obstacle_max_forward_m", 12.0))]
+    if not matching:
+        return dict(fail, reason="OBSTACLE_GEOMETRY_UNKNOWN")
+    obstacle = min(matching, key=lambda group: float(np.min(group[:, 0])))
 
     # A missing wall/side view is not proof of drivable space. Do not try
     # larger offsets when side visibility is insufficient.
