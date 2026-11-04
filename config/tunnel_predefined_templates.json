@@ -1,0 +1,40 @@
+{
+  "enabled": true,
+  "mode": "lidar_triggered_fixed_shape",
+  "speed_kmh": 5.0,
+  "lidar_z_range_m": [-1.45, 1.25],
+  "detection_forward_m": [7.0, 12.0],
+  "detection_lateral_abs_max_m": 3.5,
+  "min_obstacle_points": 5,
+  "min_side_points": 8,
+  "min_total_points": 80,
+  "max_path_horizon_m": 24.0,
+  "vehicle_half_width_m": 0.9,
+  "safety_margin_m": 0.45,
+  "min_shift_distance_m": 4.0,
+  "sample_step_m": 0.5,
+  "start_shift_m": 1.5,
+  "shift_clearance_before_obstacle_m": 2.0,
+  "hold_after_obstacle_m": 2.5,
+  "return_length_m": 5.0,
+  "return_delay_options_m": [0.0, 1.5, 3.0],
+  "min_return_observation_points_per_side": 3,
+  "return_observation_window_m": 3.0,
+  "templates": [
+    {
+      "id": "FIRST_LEFT",
+      "side": "LEFT",
+      "offset_options_m": [2.4, 2.8],
+      "survey_observed_obstacle_forward_m": [11.4, 14.0],
+      "survey_observed_obstacle_left_m": [-3.2, 0.9]
+    },
+    {
+      "id": "SECOND_RIGHT",
+      "side": "RIGHT",
+      "offset_options_m": [2.4, 2.8],
+      "survey_observed_obstacle_forward_m": [17.4, 17.7],
+      "survey_observed_obstacle_left_m": [0.4, 3.4]
+    }
+  ],
+  "notes": "Survey bounds are approximate observations in DIFFERENT stationary vehicle frames; never join as absolute coordinates. Fixed-shape templates trigger based on NEW LiDAR obstacle observations; keep CAMERA lane tracking elsewhere. Check swept path and both boundaries on every accepted candidate; do not force a turn at waypoint or time. Not yet validated with live MORAI."
+}
