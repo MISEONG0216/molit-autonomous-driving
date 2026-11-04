@@ -44,6 +44,7 @@ def parse_static_message(raw):
         "avoidance_side": None,
         "recommended_speed_kmh": 0.0,
         "latch_state": "",
+        "reason": "",
         "scan": 0,
         "detected": 0,
         "zone_active": False,
@@ -100,6 +101,7 @@ def parse_static_message(raw):
             avoidance_side=value.get("avoidance_side"),
             recommended_speed_kmh=speed,
             latch_state=str(value.get("latch_state", ""))[:100],
+            reason=str(value.get("reason", ""))[:160],
             scan=int(value.get("scan", 0)),
             detected=int(value.get("detected", 0)),
         )
