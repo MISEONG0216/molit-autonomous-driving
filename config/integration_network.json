@@ -1,10 +1,10 @@
 {
   "gps": {
-    "bind_ip": "0.0.0.0",
+    "bind_ip": "127.0.0.1",
     "port": 9201
   },
   "imu": {
-    "bind_ip": "0.0.0.0",
+    "bind_ip": "127.0.0.1",
     "port": 1111
   },
   "competition_status": {
