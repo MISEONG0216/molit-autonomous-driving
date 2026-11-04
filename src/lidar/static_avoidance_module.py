@@ -36,6 +36,7 @@ from integration.static_avoidance_io import configured_avoidance_speed_kmh
 from static_avoidance_path_latch import AvoidancePathLatch
 from shadow_wall_guard import pick_shadow_detour, check_wall_clearance, close_forward_collision
 from shadow_ego_planner import choose_local_detour
+from temporal_shadow_observations import TemporalShadowObservations
 from post_detour_clearance import evaluate_handoff_clearance
 
 NETWORK_FILE = ROOT / "config" / "integration_network.json"
@@ -168,6 +169,11 @@ def main():
     shadow_plan_last_report = None
     post_detour_origin = None
     post_detour_done = False
+    shadow_scan_history = TemporalShadowObservations(
+        max_frames=int(ego_cfg.get("temporal_visibility_frames", 5)),
+        max_age_sec=float(ego_cfg.get("temporal_visibility_max_age_sec", 1.8)),
+        voxel_m=float(ego_cfg.get("temporal_visibility_voxel_m", 0.15)),
+    )
 
     print("[STATIC ZONES] " + str(static_zones))
     print(f"[STATIC AVOID SPEED] {avoidance_speed_kmh:.1f} km/h")
@@ -237,10 +243,12 @@ def main():
             shadow_returning = False
             forward_clear_verified = False
             if not gps_shadow:
+                shadow_scan_history.clear()
                 shadow_return_start_index = None
                 post_detour_origin = None
                 post_detour_done = False
             if not planner_enabled:
+                shadow_scan_history.clear()
                 # Suppress detection, tracking and path generation elsewhere.
                 obstacles, tracked = [], []
                 raw_plan = PlanResult(
@@ -260,6 +268,11 @@ def main():
                 forward, left, delta_yaw = delta_ego(previous_pose, pose)
                 previous_pose = pose
                 vehicle_points = lidar_to_vehicle(points)
+                temporal_points = None
+                if gps_shadow:
+                    shadow_scan_history.update(vehicle_points, pose, stamp)
+                    temporal_points = shadow_scan_history.get_prior_in_vehicle(
+                        pose, stamp)
                 handoff_evidence = None
                 if gps_shadow:
                     # V50: only post-detour handoff uses sparse far-field
@@ -459,12 +472,17 @@ def main():
                                 latch_state = "EGO_LIDAR_POST_DETOUR_STOP"
                     if (shadow_locked_path is None and not handoff_active
                             and latch_state != "EGO_LIDAR_TAIL_RELEASED"):
-                        local = choose_local_detour(vehicle_points, ego_cfg)
+                        local = choose_local_detour(
+                            vehicle_points, ego_cfg,
+                            visibility_history=temporal_points,
+                        )
                         report = (local["status"], local["reason"])
                         if report != shadow_plan_last_report or scan_count % 25 == 0:
                             print(
-                                "[SHADOW V44] scan={} result={} reason={}".format(
-                                    scan_count, local["status"], local["reason"]
+                                "[SHADOW V54] scan={} result={} reason={} "
+                                "history_points={}".format(
+                                    scan_count, local["status"], local["reason"],
+                                    len(temporal_points) if temporal_points is not None else 0,
                                 )
                             )
                             for detail in local.get("diagnostics", []):
