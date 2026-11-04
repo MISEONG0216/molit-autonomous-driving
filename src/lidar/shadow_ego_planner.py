@@ -20,6 +20,39 @@ def _distance_points_to_polyline(points, path):
     return distances
 
 
+def _sweep_metrics(points, path, clearance, shift_end, return_start):
+    """Per-return closest segment, stage and clearance (diagnostics only).
+
+    Assign each LiDAR point to the path segment nearest to that point.
+    Stage follows that closest segment's forward position, not the point's
+    world X; all three hit counts therefore sum to the original total.
+    """
+    points = np.asarray(points, dtype=float)
+    min_dist = np.full(len(points), np.inf, dtype=float)
+    closest_stage = np.zeros(len(points), dtype=np.int8)
+    for a, b in zip(path[:-1], path[1:]):
+        v = b - a
+        t = np.clip(np.sum((points - a) * v, axis=1) /
+                    max(float(np.dot(v, v)), 1e-9), 0.0, 1.0)
+        dist = np.linalg.norm(points - (a + t[:, None] * v), axis=1)
+        better = dist < min_dist
+        min_dist[better] = dist[better]
+        x_at_segment = 0.5 * (a[0] + b[0])
+        stage = (0 if x_at_segment < shift_end else
+                 1 if x_at_segment <= return_start else 2)
+        closest_stage[better] = stage
+    hits = min_dist < clearance
+    stages = ("ENTER", "PASS", "RETURN")
+    counts = {name: int(np.count_nonzero(hits & (closest_stage == i)))
+              for i, name in enumerate(stages)}
+    minima = {
+        name: (round(float(np.min(min_dist[closest_stage == i])), 3)
+               if np.any(closest_stage == i) else None)
+        for i, name in enumerate(stages)
+    }
+    return min_dist, counts, minima
+
+
 def _smoothstep(t):
     t = np.clip(t, 0.0, 1.0)
     return t * t * (3.0 - 2.0 * t)
@@ -153,35 +186,59 @@ def choose_local_detour(points, cfg, active_side=None):
             (pts[:, 1] * sign >= clearance) &
             (pts[:, 1] * sign <= float(cfg.get("side_observation_max_m", 7.0)))
         ))
-    if min(far_observed.values()) < endpoint_min:
-        return dict(fail, reason="RETURN_CORRIDOR_UNOBSERVED",
-                    diagnostics=[{"return_end_m": round(return_end, 2),
-                                  "far_side_points": far_observed}])
+    return_visible = min(far_observed.values()) >= endpoint_min
+    # Always evaluate geometry for diagnostics, even when endpoint coverage
+    # fails. Missing observation NEVER makes a new driving path permissible.
+    visibility_diagnostic = {
+        "return_end_m": round(return_end, 2),
+        "far_side_points": far_observed,
+        "required_points_per_side": endpoint_min,
+    }
 
     offsets = [float(x) for x in cfg.get("candidate_offsets_m", [1.6, 2.0, 2.4])]
     if not offsets or any(not np.isfinite(v) or v <= 0.0 for v in offsets):
         return dict(fail, reason="BAD_CANDIDATE_OFFSETS")
+    diagnostic_offsets = [float(x) for x in cfg.get(
+        "diagnostic_offsets_m", [2.9, 3.0, 3.1, 3.2]
+    )]
+    if any(not np.isfinite(v) or v <= 0.0 for v in diagnostic_offsets):
+        return dict(fail, reason="BAD_DIAGNOSTIC_OFFSETS")
+    active_offsets = set(offsets)
+    # Diagnostic-only offsets must never affect motion. Road/lane legality
+    # and nearby wall clearance are NOT independently verified by this scan.
+    all_offsets = sorted(active_offsets | set(diagnostic_offsets))
     candidates = []
-    diagnostics = []
+    diagnostics = [visibility_diagnostic] if not return_visible else []
     side_order = (active_side,) if active_side in (1, -1) else (1, -1)
     for side in side_order:
-        for offset in sorted(set(offsets)):
+        for offset in all_offsets:
             path = _path(side, cfg, offset, shift_end, return_start, return_end)
-            distances = _distance_points_to_polyline(pts[:, :2], path)
-            hits = int(np.count_nonzero(distances < clearance))
+            distances, stage_hits, stage_minima = _sweep_metrics(
+                pts[:, :2], path, clearance, shift_end, return_start
+            )
+            hits = int(sum(stage_hits.values()))
             min_distance = float(np.min(distances))
             direction = "LEFT" if side == 1 else "RIGHT"
+            diagnostic_only = offset not in active_offsets
+            collision_free = hits <= int(cfg.get("allowed_points", 0))
+            reason = ("SWEEP_COLLISION" if not collision_free else
+                      "RETURN_CORRIDOR_UNOBSERVED" if not return_visible else
+                      "DIAGNOSTIC_ONLY" if diagnostic_only else "SAFE")
             diagnostics.append({
                 "side": direction, "offset_m": offset,
+                "diagnostic_only": diagnostic_only,
                 "shift_end_m": round(shift_end, 2),
                 "return_start_m": round(return_start, 2),
                 "return_end_m": round(return_end, 2),
                 "hit_points": hits, "min_distance_m": round(min_distance, 3),
-                "reason": "SAFE" if hits <= int(cfg.get("allowed_points", 0))
-                          else "SWEEP_COLLISION",
+                "stage_hits": stage_hits, "stage_min_distance_m": stage_minima,
+                "reason": reason,
             })
-            if hits <= int(cfg.get("allowed_points", 0)):
+            if collision_free and return_visible and not diagnostic_only:
                 candidates.append((offset, 0 if side == 1 else 1, side, path))
+    if not return_visible:
+        return dict(fail, reason="RETURN_CORRIDOR_UNOBSERVED",
+                    diagnostics=diagnostics)
     if not candidates:
         return dict(fail, reason="NO_FREE_SIDE", diagnostics=diagnostics)
     offset, _, side, path = min(candidates, key=lambda item: item[:2])
