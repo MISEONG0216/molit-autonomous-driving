@@ -531,6 +531,7 @@ def main():
                 "avoidance_side": plan.avoidance_side,
                 "recommended_speed_kmh": max(0.0, float(plan.recommended_speed_kph)),
                 "latch_state": latch_state,
+                "reason": str(plan.reason)[:160],
                 "scan": scan_count,
                 "detected": len(obstacles),
                 "waypoint_index": waypoint_index,
@@ -563,6 +564,10 @@ def main():
                     f"zone={inside_zone} side={plan.avoidance_side} "
                     f"path={len(selected_path)}"
                 )
+                if gps_shadow and status == "STOP_REQUIRED":
+                    print("[SHADOW STOP DETAIL] scan={} wp={} reason={} latch={} tracked={} path={} verified={}".format(
+                        scan_count, waypoint_index, str(plan.reason), latch_state,
+                        len(tracked), len(selected_path), int(shadow_verified)), flush=True)
                 previous_status = (status, latch_state)
     except KeyboardInterrupt:
         print("\n[STATIC] stopped by user.")
