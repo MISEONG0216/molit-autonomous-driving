@@ -117,9 +117,14 @@
     "prewarm_result_age_sec": 1,
     "crossing_speed_zones": [
       [
+        820,
+        879,
+        20
+      ],
+      [
         880,
         899,
-        12
+        10
       ],
       [
         900,
@@ -127,7 +132,7 @@
         5
       ]
     ],
-    "crossing_speed_note": "User-reported pedestrian crossing WP900-940: pre-brake WP880-899 to <=12km/h, WP900-940 to <=5km/h. Keep person detection STOP and stale-data STOP active; requires valid GPS/wp."
+    "crossing_speed_note": "User WP900-940 pedestrian crossing. Early deceleration WP820-879 cap20; WP880-899 cap10; WP900-940 cap5 km/h; pedestrian full stop and stale-data full stop retained. WP gate uses valid GPS path proximity."
   },
   "highway_follow": {
     "zones_wp": [
@@ -238,7 +243,7 @@
     "release_end_distance_m": 4.5,
     "release_clear_ahead_m": 6,
     "release_max_front_points": 5,
-    "commit_locked_path_despite_new_hazards": true,
-    "committed_path_note": "Experimental simulator-only mode. Once an initially LiDAR-verified GPS-shadow detour has been latched, subsequent wall-clearance rejections and dynamic-track STOPs do not cancel that route. Initial detour selection, final tail release safety, sensor freshness and main-controller fail-stops remain enabled. Collision possible if new obstacles enter committed path."
+    "commit_locked_path_despite_new_hazards": false,
+    "committed_path_note": "Disabled for this collision-prevention branch: retain revalidation of latched shadow avoidance paths and dynamic-track STOP on fresh LiDAR hazards."
   }
 }
