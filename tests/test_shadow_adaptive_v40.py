@@ -36,8 +36,10 @@ class ShadowV40Tests(unittest.TestCase):
         result = choose_local_detour(scan(left=5.0, right=-2.0), CFG)
         self.assertEqual(result["status"], "AVOIDING", result["reason"])
         self.assertEqual(result["side"], 1)
-        self.assertTrue(any(d["side"] == "RIGHT" for d in result["diagnostics"]))
-        self.assertTrue(any(d["side"] == "LEFT" and d["reason"] == "SAFE"
+        # V44 also emits return-endpoint visibility diagnostics without
+        # a side field; verify actual LEFT/RIGHT path candidates only.
+        self.assertTrue(any(d.get("side") == "RIGHT" for d in result["diagnostics"]))
+        self.assertTrue(any(d.get("side") == "LEFT" and d.get("reason") == "SAFE"
                             for d in result["diagnostics"]))
 
     def test_left_wall_obstruction_chooses_right(self):
