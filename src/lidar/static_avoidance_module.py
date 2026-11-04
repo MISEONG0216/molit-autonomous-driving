@@ -426,10 +426,15 @@ def main():
                         if shadow_verified:
                             print(
                                 "[SHADOW SELECTED] side={} offset={:.1f}m "
-                                "return_delay={:.1f}m (full sweep + observed endpoint)".format(
+                                "return_delay={:.1f}m score={:.3f} "
+                                "min_dist={:.2f}m max_curvature={:.3f}/m "
+                                "(zero sweep hits + dual-sided endpoint observed)".format(
                                     "LEFT" if local["side"] == 1 else "RIGHT",
                                     float(local.get("selected_offset_m", 0.0)),
                                     float(local.get("selected_return_delay_m", 0.0)),
+                                    float(local.get("selected_score", 0.0)),
+                                    float(local.get("selected_min_distance_m", 0.0)),
+                                    float(local.get("selected_max_curvature_1pm", 0.0)),
                                 ),
                                 flush=True,
                             )
