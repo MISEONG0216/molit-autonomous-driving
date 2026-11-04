@@ -405,7 +405,7 @@ def main():
                         report = (local["status"], local["reason"])
                         if report != shadow_plan_last_report or scan_count % 25 == 0:
                             print(
-                                "[SHADOW V44] scan={} result={} reason={}".format(
+                                "[SHADOW V48] scan={} result={} reason={}".format(
                                     scan_count, local["status"], local["reason"]
                                 )
                             )
