@@ -274,7 +274,7 @@ def choose_second_survey_hold(points, config, template, clearance):
                 diagnostics=diagnostics, match=True)
 
 
-def plan_second_verified_return(points, config, ego_pose, wall_cfg):
+def plan_second_verified_return(points, config, ego_pose, wall_cfg, offset):
     """From right-hand hold, propose an entirely separate leftward return.
 
     The existing main controller will follow it ONLY if current LiDAR
@@ -303,7 +303,10 @@ def plan_second_verified_return(points, config, ego_pose, wall_cfg):
     if not far_ok:
         return dict(result, reason="RETURN_END_UNOBSERVED",
                     diagnostics=[{"far_side_points":far_counts}])
-    offset = float(min(config["templates"][1]["offset_options_m"]))
+    offset = float(offset)
+    if (not np.isfinite(offset) or offset not in [float(v) for v in
+            config["templates"][1]["offset_options_m"]]):
+        return dict(result, reason="RETURN_OFFSET_INVALID")
     x = np.arange(0.0, endpoint + .001, float(
         config.get("sample_step_m", .5)))
     y = offset * _smoothstep(
