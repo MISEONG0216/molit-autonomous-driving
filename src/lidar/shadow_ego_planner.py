@@ -174,74 +174,111 @@ def choose_local_detour(points, cfg, active_side=None):
         return dict(fail, reason=error)
     shift_end, return_start, return_end = geom
 
-    # A late return is accepted only when wall sectors are actually
-    # observed near the proposed endpoint, not just near the ego vehicle.
+    # Return timing is a candidate dimension, not a single fixed value.
+    # Never create an unobserved return: each candidate must independently
+    # meet BOTH far-side observation and full swept-footprint constraints.
     endpoint_window = float(cfg.get("end_visibility_window_m", 3.0))
     endpoint_min = int(cfg.get("end_visibility_min_points", 3))
-    far_observed = {}
-    for sign, name in ((1, "LEFT"), (-1, "RIGHT")):
-        far_observed[name] = int(np.count_nonzero(
-            (pts[:, 0] >= return_end - endpoint_window) &
-            (pts[:, 0] <= return_end + 1.0) &
-            (pts[:, 1] * sign >= clearance) &
-            (pts[:, 1] * sign <= float(cfg.get("side_observation_max_m", 7.0)))
-        ))
-    return_visible = min(far_observed.values()) >= endpoint_min
-    # Always evaluate geometry for diagnostics, even when endpoint coverage
-    # fails. Missing observation NEVER makes a new driving path permissible.
-    visibility_diagnostic = {
-        "return_end_m": round(return_end, 2),
-        "far_side_points": far_observed,
-        "required_points_per_side": endpoint_min,
-    }
-
-    offsets = [float(x) for x in cfg.get("candidate_offsets_m", [1.6, 2.0, 2.4])]
-    if not offsets or any(not np.isfinite(v) or v <= 0.0 for v in offsets):
-        return dict(fail, reason="BAD_CANDIDATE_OFFSETS")
-    diagnostic_offsets = [float(x) for x in cfg.get(
-        "diagnostic_offsets_m", [2.9, 3.0, 3.1, 3.2]
-    )]
-    if any(not np.isfinite(v) or v <= 0.0 for v in diagnostic_offsets):
-        return dict(fail, reason="BAD_DIAGNOSTIC_OFFSETS")
+    offsets = [float(v) for v in cfg.get(
+        "candidate_offsets_m", [1.6, 2.0, 2.4, 2.8])]
+    diagnostic_offsets = [float(v) for v in cfg.get(
+        "diagnostic_offsets_m", [2.9, 3.0, 3.1, 3.2])]
+    delay_options = [float(v) for v in cfg.get(
+        "return_delay_options_m", [0.0, 1.5, 3.0])]
+    if (not offsets or not delay_options or
+            any(not np.isfinite(v) or v <= 0.0
+                for v in offsets + diagnostic_offsets) or
+            any(not np.isfinite(v) or v < 0.0 for v in delay_options)):
+        return dict(fail, reason="BAD_CANDIDATE_CONFIG")
     active_offsets = set(offsets)
-    # Diagnostic-only offsets must never affect motion. Road/lane legality
-    # and nearby wall clearance are NOT independently verified by this scan.
     all_offsets = sorted(active_offsets | set(diagnostic_offsets))
-    candidates = []
-    diagnostics = [visibility_diagnostic] if not return_visible else []
     side_order = (active_side,) if active_side in (1, -1) else (1, -1)
-    for side in side_order:
-        for offset in all_offsets:
-            path = _path(side, cfg, offset, shift_end, return_start, return_end)
-            distances, stage_hits, stage_minima = _sweep_metrics(
-                pts[:, :2], path, clearance, shift_end, return_start
-            )
-            hits = int(sum(stage_hits.values()))
-            min_distance = float(np.min(distances))
-            direction = "LEFT" if side == 1 else "RIGHT"
-            diagnostic_only = offset not in active_offsets
-            collision_free = hits <= int(cfg.get("allowed_points", 0))
-            reason = ("SWEEP_COLLISION" if not collision_free else
-                      "RETURN_CORRIDOR_UNOBSERVED" if not return_visible else
-                      "DIAGNOSTIC_ONLY" if diagnostic_only else "SAFE")
-            diagnostics.append({
-                "side": direction, "offset_m": offset,
-                "diagnostic_only": diagnostic_only,
-                "shift_end_m": round(shift_end, 2),
-                "return_start_m": round(return_start, 2),
-                "return_end_m": round(return_end, 2),
-                "hit_points": hits, "min_distance_m": round(min_distance, 3),
-                "stage_hits": stage_hits, "stage_min_distance_m": stage_minima,
-                "reason": reason,
-            })
-            if collision_free and return_visible and not diagnostic_only:
-                candidates.append((offset, 0 if side == 1 else 1, side, path))
-    if not return_visible:
-        return dict(fail, reason="RETURN_CORRIDOR_UNOBSERVED",
-                    diagnostics=diagnostics)
+    candidates = []
+    diagnostics = []
+    visibility_passed = False
+    max_path = float(cfg.get("max_horizon_m", 24.0))
+    min_return_length = float(cfg.get("return_length_m", 5.0))
+    for delay in sorted(set(delay_options)):
+        candidate_return_start = return_start + delay
+        candidate_return_end = max(
+            float(cfg.get("horizon_m", 15.0)),
+            candidate_return_start + min_return_length,
+        )
+        within_horizon = candidate_return_end <= max_path + 1e-6
+        far_observed = {}
+        for sign, name in ((1, "LEFT"), (-1, "RIGHT")):
+            far_observed[name] = int(np.count_nonzero(
+                (pts[:, 0] >= candidate_return_end - endpoint_window) &
+                (pts[:, 0] <= candidate_return_end + 1.0) &
+                (pts[:, 1] * sign >= clearance) &
+                (pts[:, 1] * sign <= float(
+                    cfg.get("side_observation_max_m", 7.0)))
+            ))
+        return_visible = (within_horizon and
+                          min(far_observed.values()) >= endpoint_min)
+        visibility_passed = visibility_passed or return_visible
+        diagnostics.append({
+            "return_start_m": round(candidate_return_start, 2),
+            "return_end_m": round(candidate_return_end, 2),
+            "return_delay_m": round(delay, 2),
+            "far_side_points": far_observed,
+            "required_points_per_side": endpoint_min,
+            "visibility_ok": return_visible,
+            "reason": ("OBSERVED" if return_visible else
+                       "RETURN_HORIZON_EXCEEDED" if not within_horizon else
+                       "RETURN_CORRIDOR_UNOBSERVED"),
+        })
+        # Endpoints beyond maximum LiDAR planning horizon are not sampled
+        # or approved. All other candidates get diagnostics, even if their
+        # endpoint coverage fails, to reveal PASS vs RETURN collisions.
+        if not within_horizon:
+            continue
+        for side in side_order:
+            for offset in all_offsets:
+                path = _path(
+                    side, cfg, offset, shift_end,
+                    candidate_return_start, candidate_return_end
+                )
+                distances, stage_hits, stage_minima = _sweep_metrics(
+                    pts[:, :2], path, clearance, shift_end,
+                    candidate_return_start
+                )
+                hits = int(sum(stage_hits.values()))
+                diagnostic_only = offset not in active_offsets
+                collision_free = hits <= int(cfg.get("allowed_points", 0))
+                reason = ("SWEEP_COLLISION" if not collision_free else
+                          "RETURN_CORRIDOR_UNOBSERVED" if not return_visible else
+                          "DIAGNOSTIC_ONLY" if diagnostic_only else "SAFE")
+                diagnostics.append({
+                    "side": "LEFT" if side == 1 else "RIGHT",
+                    "offset_m": offset,
+                    "diagnostic_only": diagnostic_only,
+                    "return_delay_m": round(delay, 2),
+                    "shift_end_m": round(shift_end, 2),
+                    "return_start_m": round(candidate_return_start, 2),
+                    "return_end_m": round(candidate_return_end, 2),
+                    "far_side_points": far_observed,
+                    "visibility_ok": return_visible,
+                    "hit_points": hits,
+                    "min_distance_m": round(float(np.min(distances)), 3),
+                    "stage_hits": stage_hits,
+                    "stage_min_distance_m": stage_minima,
+                    "reason": reason,
+                })
+                if collision_free and return_visible and not diagnostic_only:
+                    # Minimal deviation first, then earlier return.
+                    # Never let a 2.9m+ diagnostic candidate steer.
+                    candidates.append((
+                        offset, delay, 0 if side == 1 else 1, side, path
+                    ))
     if not candidates:
-        return dict(fail, reason="NO_FREE_SIDE", diagnostics=diagnostics)
-    offset, _, side, path = min(candidates, key=lambda item: item[:2])
+        return dict(
+            fail,
+            reason=("NO_FREE_SIDE" if visibility_passed
+                    else "RETURN_CORRIDOR_UNOBSERVED"),
+            diagnostics=diagnostics,
+        )
+    offset, delay, _, side, path = min(candidates, key=lambda item: item[:3])
     return {"status": "AVOIDING", "side": side, "path": path.tolist(),
             "reason": "EGO_LIDAR_ADAPTIVE_LEFT" if side == 1
                       else "EGO_LIDAR_ADAPTIVE_RIGHT",
