@@ -441,7 +441,7 @@ def main():
                                 vehicle_points, wall_cfg)
                             if scan_count % 5 == 0 or not forward_clear_verified:
                                 print(
-                                    "[POST DETOUR V50] scan={} wp={} verdict={} "
+                                    "[POST DETOUR V55] scan={} wp={} verdict={} "
                                     "reason={} near_1_4={} far_4_12={} "
                                     "allowed_far={} sides=L{}/R{} "
                                     "roi={} emergency_close={}".format(
