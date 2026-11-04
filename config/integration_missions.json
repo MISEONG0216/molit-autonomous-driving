@@ -243,12 +243,36 @@
     "allowed_points": 0,
     "avoidance_speed_kmh": 5,
     "max_result_age_sec": 1.6,
-    "notes": "Vehicle-frame current LiDAR wall+obstacle clearance. Detour is chosen ONCE, locked, and remaining polyline rechecked; global path not used to generate shadow detour. All ranges are uncalibrated trial values; rejection STOP is expected if walls or observed points obstruct either side.",
+    "notes": "V44: test three return starts (base, +1.5m, +3m) for each side and offset; select ONLY original 1.6/2.0/2.4/2.8m if full sweep has zero hits and endpoint observed on BOTH sides. 2.9-3.2m remain diagnostic-only. Preserve 5km/h and all shadow stops. Verify live MORAI and rules before any additional maneuver expansion.",
     "release_tail_points": 9,
     "release_end_distance_m": 4.5,
     "release_clear_ahead_m": 6,
     "release_max_front_points": 5,
-    "commit_locked_path_despite_new_hazards": false,
-    "committed_path_note": "Disabled for this collision-prevention branch: retain revalidation of latched shadow avoidance paths and dynamic-track STOP on fresh LiDAR hazards."
+    "candidate_offsets_m": [
+      1.6,
+      2,
+      2.4,
+      2.8
+    ],
+    "max_horizon_m": 24,
+    "pre_obstacle_buffer_m": 1.5,
+    "min_shift_end_m": 6,
+    "post_obstacle_hold_m": 2.5,
+    "return_length_m": 5,
+    "end_visibility_window_m": 3,
+    "end_visibility_min_points": 3,
+    "side_observation_max_m": 7,
+    "obstacle_extent_gap_m": 0.8,
+    "diagnostic_offsets_m": [
+      2.9,
+      3,
+      3.1,
+      3.2
+    ],
+    "return_delay_options_m": [
+      0,
+      1.5,
+      3
+    ]
   }
 }
