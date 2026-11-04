@@ -51,6 +51,9 @@ from integration.dynamic_pedestrian_io import (
 from integration.gps_shadow_io import GpsShadowPose
 from integration.gps_shadow_lane import parse_lane_result
 from integration.shadow_tail_io import shadow_tail_steering
+from integration.gentle_return import (
+    gentle_return_pure_pursuit, limit_return_steering,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -326,6 +329,7 @@ def main():
     run_start = time.time()
     period = 1.0 / base.CONTROL_HZ
     prev_control_time = time.time()
+    previous_commanded_steering = None
 
     traffic = parse_traffic_message(None)
     traffic_updated_at = 0.0
@@ -756,6 +760,7 @@ def main():
             )
             static_active = False
             static_stop = False
+            gentle_return_active = False
             if args.static_control and static_required:
                 # CLEAR: V7 or shadow-lane speed. AVOIDING: original
                 # LiDAR locked local route temporarily overrides lane steer.
@@ -775,10 +780,25 @@ def main():
                         static_state = "SHADOW_WALL_NOT_VERIFIED"
                     else:
                         target_speed_kmh = min(target_speed_kmh, static_speed_limit)
-                        local_pp = local_path_pure_pursuit(
-                            static_plan["path"], current_x, current_y, yaw,
-                            base.VEHICLE_LENGTH,
-                        )
+                        gentle_return_active = bool(
+                            shadow_active and static_plan.get(
+                                "shadow_returning", False))
+                        if gentle_return_active:
+                            local_pp = gentle_return_pure_pursuit(
+                                static_plan["path"], current_x, current_y, yaw,
+                                base.VEHICLE_LENGTH,
+                                lookahead_m=float(
+                                    missions.get("gps_shadow_ego_planner", {}).get(
+                                        "gentle_return_lookahead_m", 3.8)),
+                            )
+                            if local_pp is not None:
+                                mission["reasons"].append(
+                                    "shadow_gentle_return_lookahead")
+                        else:
+                            local_pp = local_path_pure_pursuit(
+                                static_plan["path"], current_x, current_y, yaw,
+                                base.VEHICLE_LENGTH,
+                            )
                         if local_pp is None and shadow_active:
                             # At the end of a verified locked path there may
                             # be no target >= original fixed 2.5m lookahead.
@@ -862,6 +882,24 @@ def main():
 
             dt_control = max(1e-3, now - prev_control_time)
             prev_control_time = now
+            # Smooth only the return/handoff steering after the original
+            # detour's left approach. Do not bypass any mission STOP.
+            gentle_handoff_active = bool(
+                shadow_active and static_fresh and
+                static_plan.get("post_detour_handoff", False)
+                and not static_stop and lane_fresh
+            )
+            if ((gentle_return_active and static_active) or gentle_handoff_active):
+                steer_cfg = missions.get("gps_shadow_ego_planner", {})
+                steering = limit_return_steering(
+                    steering, previous_commanded_steering, dt_control,
+                    max_abs_rad=float(steer_cfg.get(
+                        "gentle_return_max_steer_rad", 0.22)),
+                    max_rate_rad_s=float(steer_cfg.get(
+                        "gentle_return_max_steer_rate_rad_s", 0.35)),
+                )
+                mission["reasons"].append("shadow_gentle_return_steer_limit")
+            previous_commanded_steering = float(steering)
 
             if ((args.traffic and not shadow_active and mission["traffic_full_brake"])
                 or (args.merge_control and not shadow_active and mission["merge_stop"])
