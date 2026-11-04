@@ -34,7 +34,33 @@ def _closest_distance_to_polyline(points, path):
     return minimum
 
 
-def check_wall_clearance(local_path_global, ego_pose, vehicle_points, cfg):
+def path_alignment_metrics(local_path_global, ego_pose):
+    """Continuous point-to-segment alignment in metres.
+
+    This is a geometric tracking error in the supplied pose frame, NOT an
+    independent estimate of GPS-shadow dead-reckoning uncertainty.
+    """
+    x, y, yaw = (float(v) for v in ego_pose)
+    path = _vehicle_xy(local_path_global, x, y, yaw)
+    if path.ndim != 2 or len(path) < 2 or not np.isfinite(path).all():
+        raise ValueError("Invalid path geometry")
+    start = path[:-1]
+    delta = path[1:] - start
+    norm2 = np.maximum(np.sum(delta * delta, axis=1), 1e-9)
+    projection = np.clip(-np.sum(start * delta, axis=1) / norm2, 0.0, 1.0)
+    foot = start + projection[:, None] * delta
+    distances = np.linalg.norm(foot, axis=1)
+    index = int(np.argmin(distances))
+    return {
+        "segment_error_m": float(distances[index]),
+        "vertex_error_m": float(np.min(np.linalg.norm(path, axis=1))),
+        "nearest_segment_index": index,
+        "nearest_segment_forward_m": float(foot[index, 0]),
+        "nearest_segment_left_m": float(foot[index, 1]),
+    }
+
+
+def check_wall_clearance(local_path_global, ego_pose, vehicle_points, cfg, alignment_diagnostics=None):
     """Return (verified, reason). All seen obstacles/walls must clear sweep.
 
     Points must be fresh from current scan; worker ensures freshness. Vehicle
@@ -49,8 +75,12 @@ def check_wall_clearance(local_path_global, ego_pose, vehicle_points, cfg):
         if (pts.ndim != 2 or pts.shape[1] < 3 or path.shape[0] < 2
                 or not np.isfinite(path).all() or not np.isfinite(pts).all()):
             return False, "BAD_LIDAR_OR_PATH"
-        if float(np.min(np.linalg.norm(path - [0, 0], axis=1))) > float(
-                cfg.get("max_path_pose_error_m", 1.8)):
+        metrics = path_alignment_metrics(local_path_global, ego_pose)
+        metrics["alignment_limit_m"] = float(cfg.get(
+            "max_path_pose_error_m", 1.8))
+        if alignment_diagnostics is not None:
+            alignment_diagnostics.update(metrics)
+        if metrics["segment_error_m"] > metrics["alignment_limit_m"]:
             return False, "PATH_NOT_ALIGNED"
         scan = pts[(pts[:, 2] > float(cfg.get("z_min_m", -1.45)))
                    & (pts[:, 2] < float(cfg.get("z_max_m", 1.25)))
