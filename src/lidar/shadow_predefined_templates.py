@@ -247,18 +247,40 @@ def choose_second_survey_hold(points, config, template, clearance):
 
     xmin, xmax = (float(v) for v in cfg["forward_window_m"])
     ymin, ymax = (float(v) for v in cfg["lateral_window_m"])
+    # Survey #3 was captured from a different lateral ego pose. Matching
+    # its absolute Y would fail after FIRST_LEFT's lateral hold. Instead
+    # estimate the nearer left tunnel wall from an unobstructed, short
+    # forward segment, then compare relative wall-to-obstacle lateral gap.
+    wx0, wx1 = (float(v) for v in
+                cfg.get("left_wall_reference_forward_m", [3.0, 12.0]))
+    wall_band = pts[(pts[:, 0] >= wx0) & (pts[:, 0] <= wx1) &
+                    (pts[:, 1] >= float(
+                        cfg.get("wall_reference_min_left_m", 2.0))) &
+                    (pts[:, 1] <= 8.0)]
+    min_wall = int(cfg.get("min_wall_reference_points", 10))
+    if len(wall_band) < min_wall:
+        return dict(failure, reason="SECOND_REFERENCE_WALL_UNOBSERVED",
+                    diagnostics=[{"wall_points":len(wall_band)}],
+                    match=False)
+    # Near-side returns on the left boundary (not the far fence line)
+    # form the first continuous lateral cluster. Percentile is robust
+    # to occasional distant wall returns.
+    wall_y = float(np.percentile(wall_band[:, 1], 25.0))
+    wall_gap = float(cfg.get("survey_left_wall_to_obstacle_m", 3.5))
+    tol = float(cfg.get("left_wall_gap_tolerance_m", 1.6))
+    predicted_object_y = wall_y - wall_gap
     candidate = pts[(pts[:, 0] >= xmin) & (pts[:, 0] <= xmax) &
-                    (pts[:, 1] >= ymin) & (pts[:, 1] <= ymax)]
+                    (pts[:, 1] >= max(ymin, predicted_object_y - tol - 2.0)) &
+                    (pts[:, 1] <= min(ymax, predicted_object_y + tol + 2.0))]
+    details = [{"wall_left_m":round(wall_y, 3),
+                "predicted_object_left_m":round(predicted_object_y, 3)}]
     if len(candidate) < threshold:
-        # If the expected object arrives TOO CLOSE without being matched,
-        # stop instead of allowing the camera to blindly approach it.
-        late = pts[(pts[:, 0] >= float(cfg["near_unmatched_stop_m"])) &
-                   (pts[:, 0] < xmin) &
-                   (pts[:, 1] >= ymin) & (pts[:, 1] <= ymax)]
-        if len(late) >= threshold:
-            return dict(failure, reason="SECOND_MATCH_WINDOW_MISSED")
+        # A non-matching detection is NOT a reason to brake at 8-15 m.
+        # Continue camera lane control while the independent emergency
+        # gate protects the near ego corridor (<8m).
         return dict(status="CLEAR", side=None, path=[],
-                    reason="WAITING_SECOND_SURVEY_MATCH", diagnostics=[],
+                    reason="WAITING_SECOND_SURVEY_MATCH",
+                    diagnostics=details,
                     template_id=template["id"], match=False)
     # Never merge point returns from multiple distant obstacles into a
     # bogus long rectangle. Divide at 0.7m longitudinal discontinuities.
@@ -275,22 +297,21 @@ def choose_second_survey_hold(points, config, template, clearance):
         if (xhi - xlo <= float(cfg["max_group_forward_span_m"]) and
                 abs(center_forward - float(cfg["target_forward_m"])) <=
                 float(cfg["forward_tolerance_m"]) and
-                abs(lateral_mid - float(cfg["target_left_center_m"])) <=
-                float(cfg["left_tolerance_m"]) and
+                abs((wall_y - lateral_mid) -
+                    float(cfg.get("survey_left_wall_to_obstacle_m", 3.5))) <=
+                float(cfg.get("left_wall_gap_tolerance_m", 1.6)) and
                 lateral_span >= float(cfg["min_lateral_span_m"])):
             matched.append((abs(center_forward -
                               float(cfg["target_forward_m"])), group))
     if not matched:
-        # A nearby unmatched object could be a wall or a differently placed
-        # barrier; stop if it is within the critical 15m approach zone.
-        late = pts[(pts[:, 0] >= float(cfg["near_unmatched_stop_m"])) &
-                   (pts[:, 0] < xmin) &
-                   (pts[:, 1] >= ymin) & (pts[:, 1] <= ymax)]
-        if len(late) >= threshold:
-            return dict(failure, reason="SECOND_SURVEY_UNMATCHED_CLOSE")
+        # A shape mismatch at distance does not trigger an emergency
+        # brake. The ordinary camera lane follower remains in control.
+        # Only the separate close-forward or already-confirmed blocked
+        # route safety checks may command STOP.
         return dict(status="CLEAR", side=None, path=[],
                     reason="SECOND_SURVEY_PATTERN_MISMATCH",
-                    diagnostics=[{"candidate_points":len(candidate)}],
+                    diagnostics=details + [
+                        {"candidate_points":len(candidate)}],
                     template_id=template["id"], match=False)
     obstacle = min(matched, key=lambda item: item[0])[1]
     side_counts, observed = _two_side_observed(
