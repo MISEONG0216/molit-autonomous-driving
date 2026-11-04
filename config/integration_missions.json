@@ -243,7 +243,7 @@
     "allowed_points": 0,
     "avoidance_speed_kmh": 5,
     "max_result_age_sec": 2.4,
-    "notes": "V55: preserves V54 17m 3-point detection, 18 verified detour candidates, temporal LiDAR return observation, 3.8m gentle return steering and 8m post-detour handoff. ONLY during handoff, require >=80 valid forward ROI points, 0 near-center returns in 1-4m, <=2 far-center returns in 4-12m, and >=8 wall observations on AT LEAST ONE side; lack of opposite wall evidence alone is diagnostic, not STOP. No observations on either side, confirmed centre returns, emergency short-range/dynamic detections, stale LiDAR, lost lane or invalid GPS-shadow pose still stop. MORAI validation required.",
+    "notes": "V56: V55 17m/3pts, 18 detour candidates, 5-frame LiDAR history and gentle return unchanged. During 8m post-detour handoff a fresh valid camera steering angle may predict a short bicycle-model return corridor ONLY if raw straight 4-12m centre returns exceed 2. The entire predicted 4-12m swept corridor must be free of ALL measured LiDAR returns, with extra 0.15m clearance; near 1-4m must have zero centre returns and independent emergency/dynamic stops remain active. No valid lane steering or predicted-path clearance => STOP. No actual lane-center convergence estimator is available in this version. MORAI simulation validation required.",
     "release_tail_points": 9,
     "release_end_distance_m": 4.5,
     "release_clear_ahead_m": 6,
@@ -284,6 +284,10 @@
     "gentle_return_max_steer_rate_rad_s": 0.35,
     "temporal_visibility_frames": 5,
     "temporal_visibility_max_age_sec": 1.8,
-    "temporal_visibility_voxel_m": 0.15
+    "temporal_visibility_voxel_m": 0.15,
+    "post_detour_path_wheelbase_m": 2.7,
+    "post_detour_max_lane_steer_rad": 0.22,
+    "post_detour_min_curve_offset_m": 0.6,
+    "post_detour_path_extra_margin_m": 0.15
   }
 }
