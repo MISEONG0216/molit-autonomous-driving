@@ -253,7 +253,7 @@
       2.4,
       2.8
     ],
-    "max_horizon_m": 24,
+    "max_horizon_m": 26,
     "pre_obstacle_buffer_m": 1.5,
     "min_shift_end_m": 6,
     "post_obstacle_hold_m": 2.5,
@@ -274,7 +274,7 @@
     "score_offset_weight": 0.2,
     "score_delay_weight": 0.03,
     "post_detour_handoff_distance_m": 8,
-    "post_detour_handoff_speed_kmh": 3,
+    "post_detour_handoff_speed_kmh": 10,
     "post_detour_near_limit_m": 4,
     "post_detour_far_allowed_points": 2,
     "post_detour_min_roi_points": 80,
