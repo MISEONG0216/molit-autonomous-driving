@@ -12,16 +12,16 @@ if not "%~1"=="" if /I not "%~1"=="--drive" (
   echo Usage: run_integrated_windows.bat [--drive]
   exit /b 2
 )
-echo [V49] Start MORAI simulator with local UDP sensors first.
-echo [V49] Only integrated main process sends vehicle control.
-echo [V49] Starting traffic, pedestrian, static LiDAR, merge and GPS-shadow lane workers...
-start "V49 Traffic Camera" /D "%CD%" "%ComSpec%" /k ""%PYTHON%" -u src\traffic_light_detector.py --relay-pedestrian --relay-lane"
-start "V49 Pedestrian Follow" /D "%CD%" "%ComSpec%" /k ""%PYTHON%" -u src\dynamic_pedestrian_worker.py --follow"
-start "V49 Static LiDAR" /D "%CD%" "%ComSpec%" /k ""%PYTHON%" -u src\lidar\static_avoidance_module.py"
-start "V49 Merge Camera" /D "%CD%" "%ComSpec%" /k ""%PYTHON%" -u src\merge_side_camera_worker.py"
-start "V49 GPS Shadow Lane" /D "%CD%" "%ComSpec%" /k ""%PYTHON%" -u src\gps_shadow_lane_worker.py"
-echo [V49] Launching integrated control with 20 km/h max. Default is DRY-RUN.
-echo [V49] Use --drive only after verifying all sensor workers.
+echo [V50] Start MORAI simulator with local UDP sensors first.
+echo [V50] Only integrated main process sends vehicle control.
+echo [V50] Starting traffic, pedestrian, static LiDAR, merge and GPS-shadow lane workers...
+start "V50 Traffic Camera" /D "%CD%" "%ComSpec%" /k ""%PYTHON%" -u src\traffic_light_detector.py --relay-pedestrian --relay-lane"
+start "V50 Pedestrian Follow" /D "%CD%" "%ComSpec%" /k ""%PYTHON%" -u src\dynamic_pedestrian_worker.py --follow"
+start "V50 Static LiDAR" /D "%CD%" "%ComSpec%" /k ""%PYTHON%" -u src\lidar\static_avoidance_module.py"
+start "V50 Merge Camera" /D "%CD%" "%ComSpec%" /k ""%PYTHON%" -u src\merge_side_camera_worker.py"
+start "V50 GPS Shadow Lane" /D "%CD%" "%ComSpec%" /k ""%PYTHON%" -u src\gps_shadow_lane_worker.py"
+echo [V50] Launching integrated control with 20 km/h max. Default is DRY-RUN.
+echo [V50] Use --drive only after verifying all sensor workers.
 "%PYTHON%" src\main_integrated_v1.py --traffic --static --static-control --pedestrian --pedestrian-control --merge --merge-control --follow --follow-control --gps-shadow --max-speed 20 %DRIVE_FLAG%
-echo [V49] Main exited. Close remaining V49 worker windows to release UDP ports.
+echo [V50] Main exited. Close remaining V50 worker windows to release UDP ports.
 endlocal
