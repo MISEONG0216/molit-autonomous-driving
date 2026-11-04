@@ -243,7 +243,7 @@
     "allowed_points": 0,
     "avoidance_speed_kmh": 5,
     "max_result_age_sec": 2.4,
-    "notes": "V48: 18 active candidates (3 offsets x 3 delays x 2 sides), no diagnostic-only candidates, early obstacle seeds up to 16m (was 12m), minimum 3 obstacle points (was 5), near-side observation threshold 5 points (was 8). Never relax zero-hit swept clearance or dual-sided endpoint observation; keep emergency, lane, dynamic, GPS stops. Verify new detection false positives and frame latency in MORAI.",
+    "notes": "V49: V48 18 candidate paths unchanged. Remove 8-second recovery. Following a verified detour tail release, do not request another avoidance route for at most 8m of travel; each fresh LiDAR scan must verify 12m forward corridor and side observation or STOP_REQUIRED; emergency close forward/dynamic checks remain ON. Camera lane handoff speed limited to 3km/h; GPS shadow pose/freshness fail stops unchanged. This is NOT a blanket LiDAR-off mode and is not vehicle-validated.",
     "release_tail_points": 9,
     "release_end_distance_m": 4.5,
     "release_clear_ahead_m": 6,
@@ -272,12 +272,8 @@
     "score_clearance_weight": 2,
     "score_curvature_weight": 0.8,
     "score_offset_weight": 0.2,
-    "score_delay_weight": 0.03
-  },
-  "gps_shadow_recovery": {
-    "stop_delay_sec": 8,
-    "clear_scan_confirmations": 3,
-    "recovery_speed_kmh": 2,
-    "note": "V47: When GPS SHADOW planner says STOP_REQUIRED for missing side/return observations for >=8s, the main may temporarily track fresh camera lane at <=2km/h ONLY with a fresh LiDAR result verifying ZERO central hits within forward 1-12m and at least eight side-sector returns on EACH side, confirmed across three distinct scans. Actual obstacles/dynamic STOP, unsafe/stale LiDAR, invalid lane, and GPS pose STOP are never bypassed. This is a supervised MORAI-only experiment."
+    "score_delay_weight": 0.03,
+    "post_detour_handoff_distance_m": 8,
+    "post_detour_handoff_speed_kmh": 3
   }
 }
