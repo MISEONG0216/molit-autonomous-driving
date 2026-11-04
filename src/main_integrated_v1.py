@@ -36,6 +36,7 @@ from integration.mission_io import (
 from integration.mission_manager import MissionManager
 from integration.highway_follow_io import (
     in_follow_zone, highway_speed_zones, grade_speed_cap, parse_follow_message,
+    conservative_follow_limit,
 )
 from integration.highway_speed_profile import build_highway_profile
 from integration.static_avoidance_io import (
@@ -647,9 +648,41 @@ def main():
             follow_risk = (follow_msg["risk"] if follow_fresh else 1.0)
             follow_cap = (grade_speed_cap(follow_risk)[1] if follow_fresh else
                           float(follow_cfg.get("missing_camera_cap_kmh", 15.0)))
+            follow_emergency_stop = False
             if args.follow_control and follow_in_zone:
+                # A graded speed cap alone does not ensure the vehicle brakes
+                # soon enough when the current speed is much higher.
+                conservative_cap, follow_emergency_stop, follow_reason = (
+                    conservative_follow_limit(
+                        follow_risk,
+                        follow_msg["vehicles"] if follow_fresh else 0,
+                        follow_fresh,
+                        follow_cfg,
+                    )
+                )
+                follow_cap = min(follow_cap, conservative_cap)
                 target_speed_kmh = min(target_speed_kmh, follow_cap)
                 mission["reasons"].append("highway_follow_" + follow_state.lower())
+                mission["reasons"].append("highway_" + follow_reason.lower())
+
+            # Slow *before* the surveyed WP900-940 pedestrian crossing.
+            # Mission STOP / stale perception still overrides this cap.
+            pedestrian_slow_cfg = pedestrian_cfg.get("crossing_speed_zones", [])
+            pedestrian_slow_cap = None
+            if args.pedestrian_control and not shadow_active:
+                for zone in pedestrian_slow_cfg:
+                    if (len(zone) == 3 and
+                            int(zone[0]) <= nearest_index <= int(zone[1])):
+                        cap = float(zone[2])
+                        pedestrian_slow_cap = (
+                            cap if pedestrian_slow_cap is None else
+                            min(pedestrian_slow_cap, cap)
+                        )
+                if pedestrian_slow_cap is not None:
+                    target_speed_kmh = min(
+                        target_speed_kmh, pedestrian_slow_cap
+                    )
+                    mission["reasons"].append("pedestrian_crossing_slow")
 
             pedestrian_age = (
                 max(0.0, time.time() - pedestrian_updated_at)
@@ -820,7 +853,8 @@ def main():
 
             if ((args.traffic and not shadow_active and mission["traffic_full_brake"])
                 or (args.merge_control and not shadow_active and mission["merge_stop"])
-                or (args.static_control and static_stop) or pedestrian_stop or shadow_stop):
+                or (args.static_control and static_stop) or pedestrian_stop or shadow_stop
+                or follow_emergency_stop):
                 # Any mission STOP commands full brake from main.
                 command_limiter.reset()
                 accel_cmd, brake_cmd, signed_cmd = 0.0, 1.0, -1.0
@@ -830,6 +864,7 @@ def main():
                     else "MERGE_FULL_BRAKE" if args.merge_control and mission["merge_stop"]
                     else "STATIC_FULL_BRAKE" if args.static_control and static_stop
                     else "PEDESTRIAN_FULL_BRAKE" if pedestrian_stop
+                    else "HIGHWAY_FRONT_CAR_FULL_BRAKE" if follow_emergency_stop
                     else "GPS_SHADOW_SAFE_STOP"
                 )
             elif (
@@ -837,6 +872,8 @@ def main():
                     (args.traffic and mission["traffic_approach"])
                     or (args.merge_control and mission["merge_zone"])
                     or args.static_control or shadow_active
+                    or (args.follow_control and follow_in_zone)
+                    or pedestrian_slow_cap is not None
                 )
                 and current_speed_kmh > target_speed_kmh + 0.8
             ):
