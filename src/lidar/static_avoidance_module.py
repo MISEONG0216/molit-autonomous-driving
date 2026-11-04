@@ -471,6 +471,20 @@ def main():
                     f"zone={inside_zone} side={plan.avoidance_side} "
                     f"path={len(selected_path)}"
                 )
+                if status == "STOP_REQUIRED" and raw_plan.candidate_diagnostics:
+                    for item in raw_plan.candidate_diagnostics:
+                        print(
+                            "[STATIC CANDIDATE] offset={:+.2f}m {} "
+                            "clearance={:.2f}m required={:.2f}m "
+                            "max_offset={:.2f}m boundary={:.2f}m".format(
+                                float(item["offset_m"]),
+                                item["reason"],
+                                float(item["min_clearance_m"]),
+                                float(item["safe_radius_m"]),
+                                float(item["max_abs_offset_m"]),
+                                float(item["boundary_limit_m"]),
+                            )
+                        )
                 previous_status = (status, latch_state)
     except KeyboardInterrupt:
         print("\n[STATIC] stopped by user.")
