@@ -278,6 +278,9 @@
     "post_detour_near_limit_m": 4,
     "post_detour_far_allowed_points": 2,
     "post_detour_min_roi_points": 80,
-    "post_detour_min_side_points": 8
+    "post_detour_min_side_points": 8,
+    "gentle_return_lookahead_m": 3.8,
+    "gentle_return_max_steer_rad": 0.22,
+    "gentle_return_max_steer_rate_rad_s": 0.35
   }
 }
