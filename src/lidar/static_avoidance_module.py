@@ -164,6 +164,7 @@ def main():
     shadow_verified = False
     shadow_side = None
     shadow_locked_path = None
+    shadow_return_start_index = None
     shadow_plan_last_report = None
     post_detour_origin = None
     post_detour_done = False
@@ -233,8 +234,10 @@ def main():
             # Keep a route accepted inside the zone until geometric release.
             planner_enabled = bool(inside_zone or latch.active)
             shadow_verified = False
+            shadow_returning = False
             forward_clear_verified = False
             if not gps_shadow:
+                shadow_return_start_index = None
                 post_detour_origin = None
                 post_detour_done = False
             if not planner_enabled:
@@ -286,6 +289,10 @@ def main():
                         nearest = int(np.argmin(np.sum(
                             (locked_xy - np.array([ego_x, ego_y]))**2,axis=1
                         )))
+                        shadow_returning = bool(
+                            shadow_return_start_index is not None
+                            and nearest >= shadow_return_start_index
+                        )
                         # The main controller may lose its fixed-lookahead
                         # target several points BEFORE the worker's old
                         # len-4 release threshold. Check a short remaining
@@ -318,6 +325,8 @@ def main():
                             if len(front) < int(ego_cfg.get(
                                     "release_max_front_points", 5)):
                                 shadow_locked_path = None
+                                shadow_return_start_index = None
+                                shadow_returning = False
                                 shadow_side = None
                                 post_detour_origin = (ego_x, ego_y)
                                 post_detour_done = False
@@ -517,6 +526,16 @@ def main():
                             # in global XY only for legacy local PP interface.
                             # It does not sample the global waypoint route.
                             shadow_locked_path = global_xy
+                            # Identify the final end of the offset plateau.
+                            # The approach remains unchanged; only the
+                            # longitudinal return section gets gentle steering.
+                            plateau = np.flatnonzero(
+                                np.abs(xy[:, 1]) >=
+                                0.995 * float(local["selected_offset_m"])
+                            )
+                            shadow_return_start_index = (
+                                int(plateau[-1]) if len(plateau) else None
+                            )
                             plan = PlanResult(
                                 "AVOIDING", global_xy, None,
                                 "LEFT" if shadow_side>0 else "RIGHT",
@@ -554,6 +573,7 @@ def main():
                     # GPS is valid: preserve original global static planner.
                     shadow_side = None
                     shadow_locked_path = None
+                    shadow_return_start_index = None
                     raw_plan = planner.plan(
                         ego_x=ego_x, ego_y=ego_y, obstacles=planner_obstacles
                     )
@@ -613,6 +633,8 @@ def main():
                 "shadow_wall_verified": bool(gps_shadow and shadow_verified and status == "AVOIDING"),
                 "forward_clear_verified": bool(gps_shadow and forward_clear_verified),
                 "post_detour_handoff": bool(gps_shadow and post_detour_origin is not None),
+                "shadow_returning": bool(
+                    gps_shadow and status == "AVOIDING" and shadow_returning),
             }
             data = json.dumps(packet, separators=(",", ":"), allow_nan=False).encode("utf-8")
             if len(data) > 60000:
