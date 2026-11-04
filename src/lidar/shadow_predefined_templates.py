@@ -95,6 +95,8 @@ def choose_template_detour(points, config, completed_count=0):
                 diagnostics.append(dict(side=template["side"],
                     offset_m=offset, return_delay_m=delay,
                     reason="BEYOND_HORIZON", hit_points=-1,
+                    min_distance_m=float("inf"), stage_hits={},
+                    stage_min_distance_m={}, visible=False,
                     shift_end_m=base_shift_end,
                     return_start_m=return_start, return_end_m=return_end))
                 continue
