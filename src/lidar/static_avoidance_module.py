@@ -36,8 +36,7 @@ from integration.static_avoidance_io import configured_avoidance_speed_kmh
 from static_avoidance_path_latch import AvoidancePathLatch
 from shadow_wall_guard import pick_shadow_detour, check_wall_clearance, close_forward_collision
 from shadow_ego_planner import choose_local_detour
-from shadow_predefined_templates import (choose_template_detour,
-                                         plan_second_verified_return)
+from shadow_predefined_templates import choose_template_detour
 
 NETWORK_FILE = ROOT / "config" / "integration_network.json"
 GLOBAL_PATH_FILE = ROOT / "path" / "2026_molit_comp_global_path.txt"
@@ -344,53 +343,28 @@ def main():
                             ]
                             if len(front) < int(ego_cfg.get(
                                     "release_max_front_points", 5)):
-                                if template_active_id == "SECOND_RIGHT":
-                                    # RIGHT HOLD has finished; NEVER switch to
-                                    # camera or falsely count mission done.
-                                    # Start a short separate LEFT return only
-                                    # after a NEW measured LiDAR swept-path
-                                    # check. Otherwise issue STOP_REQUIRED.
-                                    ret = plan_second_verified_return(
-                                        vehicle_points, template_cfg,
-                                        (ego_x, ego_y, ego_yaw), wall_cfg,
-                                        template_outbound_offset)
-                                    if ret["status"] == "AVOIDING":
-                                        shadow_locked_path = np.asarray(
-                                            ret["path"], dtype=float)
-                                        shadow_side = 1
-                                        template_active_id = "SECOND_RETURN"
-                                        plan = PlanResult(
-                                            "AVOIDING", shadow_locked_path,
-                                            None, "LEFT",
-                                            float(ego_cfg.get("avoidance_speed_kmh", 5.0)),
-                                            "SECOND_VERIFIED_RETURN")
-                                        shadow_verified = True
-                                        latch_state = "EGO_LIDAR_NEW_SECOND_RETURN"
-                                        print("[V49 RETURN] LiDAR-verified LEFT merge-back selected", flush=True)
-                                    else:
-                                        plan = PlanResult(
-                                            "STOP_REQUIRED", np.empty((0,3)),
-                                            None, None, 0.0, ret["reason"])
-                                        shadow_verified = False
-                                        latch_state = "SECOND_RETURN_WAIT_" + ret["reason"]
-                                        if scan_count % 5 == 0:
-                                            print("[V49 RETURN] STOP {} {}".format(
-                                                ret["reason"], ret.get("diagnostics")), flush=True)
-                                else:
-                                    if template_active_id is not None:
-                                        template_completed_count += 1
-                                        print("[TEMPLATE COMPLETED] {} completed={}".format(
-                                            template_active_id, template_completed_count), flush=True)
-                                        template_active_id = None
-                                        template_outbound_offset = None
-                                    shadow_locked_path = None
-                                    shadow_side = None
-                                    plan = PlanResult(
-                                        "CLEAR", np.empty((0, 3)), None, None,
-                                        0.0, "EGO_DETOUR_TAIL_RELEASE"
-                                    )
-                                    shadow_verified = False
-                                    latch_state = "EGO_LIDAR_TAIL_RELEASED"
+                                # V51: after SECOND_RIGHT completes the
+                                # observed 23m RIGHT-HOLD path AND the current
+                                # 6m forward lane is cleared by fresh LiDAR,
+                                # release to original CAMERA lane-following.
+                                # Do not issue a forced LEFT return.
+                                if template_active_id is not None:
+                                    template_completed_count += 1
+                                    print("[TEMPLATE COMPLETED] {} completed={} "
+                                          "handoff=CAMERA (fresh LiDAR ahead clear)".format(
+                                              template_active_id,
+                                              template_completed_count),
+                                          flush=True)
+                                    template_active_id = None
+                                    template_outbound_offset = None
+                                shadow_locked_path = None
+                                shadow_side = None
+                                plan = PlanResult(
+                                    "CLEAR", np.empty((0, 3)), None, None,
+                                    0.0, "EGO_DETOUR_TAIL_RELEASE"
+                                )
+                                shadow_verified = False
+                                latch_state = "EGO_LIDAR_TAIL_RELEASED"
                             else:
                                 plan = PlanResult(
                                     "STOP_REQUIRED", np.empty((0,3)), None,
@@ -491,7 +465,7 @@ def main():
                         report = (local["status"], local["reason"])
                         if report != shadow_plan_last_report or scan_count % 25 == 0:
                             print(
-                                "[SHADOW V49] scan={} result={} reason={}".format(
+                                "[SHADOW V51] scan={} result={} reason={}".format(
                                     scan_count, local["status"], local["reason"]
                                 )
                             )
