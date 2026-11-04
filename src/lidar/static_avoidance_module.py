@@ -258,6 +258,12 @@ def main():
                     tracked, ego_x=ego_x, ego_y=ego_y, ego_yaw=ego_yaw, confidence=1.0
                 )
                 if gps_shadow:
+                    # This is a per-scan result state, not a persistent latch.
+                    # After a route is released, skip replanning ONLY on that
+                    # scan; on the following LiDAR scan assess fresh obstacles.
+                    # Without this reset, EGO_LIDAR_TAIL_RELEASED survives
+                    # forever and silently disables all future detours.
+                    latch_state = "SHADOW_SCAN_PENDING"
                     # Create a vehicle-frame detour ONCE. Lock the selected
                     # maneuver to avoid adding a new 1.6m lateral shift on
                     # EVERY scan (which previously drove into tunnel walls).
