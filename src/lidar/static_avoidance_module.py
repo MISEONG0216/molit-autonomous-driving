@@ -368,13 +368,24 @@ def main():
                             )
                             for detail in local.get("diagnostics", []):
                                 if "offset_m" in detail:
+                                    parts = detail.get("stage_hits", {})
+                                    minimum = detail.get("stage_min_distance_m", {})
                                     print(
-                                        "[SHADOW CANDIDATE] {} {:.1f}m {} "
-                                        "hits={} clearance_min={:.2f}m "
+                                        "[SHADOW CANDIDATE] {} {:.1f}m {}{} "
+                                        "hits={} min={:.2f}m "
+                                        "ENTER={} PASS={} RETURN={} "
+                                        "stage_min={} "
                                         "shift={:.1f}m return={:.1f}-{:.1f}m".format(
                                             detail["side"], detail["offset_m"],
-                                            detail["reason"], detail["hit_points"],
+                                            detail["reason"],
+                                            " [DIAGNOSTIC ONLY]" if detail.get(
+                                                "diagnostic_only", False) else "",
+                                            detail["hit_points"],
                                             detail["min_distance_m"],
+                                            parts.get("ENTER", "-"),
+                                            parts.get("PASS", "-"),
+                                            parts.get("RETURN", "-"),
+                                            minimum,
                                             detail["shift_end_m"],
                                             detail["return_start_m"],
                                             detail["return_end_m"],
