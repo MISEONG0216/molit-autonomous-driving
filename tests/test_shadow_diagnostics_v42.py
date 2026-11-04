@@ -38,7 +38,7 @@ class V42Tests(unittest.TestCase):
         self.assertEqual(result["side"], 1)
         extras = [d for d in result["diagnostics"]
                   if d.get("offset_m") in CFG["diagnostic_offsets_m"]]
-        self.assertEqual(len(extras), 8)
+        self.assertEqual(len(extras), 8 * len(CFG["return_delay_options_m"]))
         self.assertTrue(all(d["diagnostic_only"] for d in extras))
         # At least one additional diagnostic candidate geometrically clears
         # the scan, but it still is not eligible as a selected path.
@@ -65,7 +65,7 @@ class V42Tests(unittest.TestCase):
         self.assertEqual(result["status"], "STOP_REQUIRED")
         self.assertEqual(result["reason"], "RETURN_CORRIDOR_UNOBSERVED")
         offsets = [d for d in result["diagnostics"] if "offset_m" in d]
-        self.assertEqual(len(offsets), 16)
+        self.assertEqual(len(offsets), 16 * len(CFG["return_delay_options_m"]))
         self.assertTrue(any(d.get("diagnostic_only") for d in offsets))
         self.assertEqual(result["path"], [])
 
