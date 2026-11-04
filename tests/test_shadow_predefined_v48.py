@@ -40,7 +40,19 @@ class V48Templates(unittest.TestCase):
         self.assertGreater(np.max(np.asarray(result["path"])[:, 1]), 0)
 
     def test_second_template_only_after_first_completed(self):
-        result = choose_template_detour(scan(obstacle_left=2.0), CFG, 1)
+        # V49 changes ONLY the second trigger to the measured ~17.5m
+        # stationary-survey footprint, rather than the V48 10m trigger.
+        x = np.arange(2.0, 26.0, .25)
+        walls = np.vstack((
+            np.column_stack((x, np.full(len(x), 7.0), np.zeros(len(x)))),
+            np.column_stack((x, np.full(len(x), -6.0), np.zeros(len(x)))),
+        ))
+        xs, ys = np.meshgrid(
+            np.linspace(17.45, 17.8, 8), np.linspace(.4, 3.4, 12))
+        obstacle = np.column_stack(
+            (xs.ravel(), ys.ravel(), np.zeros(xs.size)))
+        result = choose_template_detour(
+            np.vstack((walls, obstacle)), CFG, 1)
         self.assertEqual(result["status"], "AVOIDING", result["reason"])
         self.assertEqual(result["template_id"], "SECOND_RIGHT")
         self.assertEqual(result["side"], -1)
