@@ -133,7 +133,7 @@ def _candidate_geometry(obstacle, cfg, clearance):
     return (shift_end, return_start, return_end), None
 
 
-def choose_local_detour(points, cfg, active_side=None):
+def choose_local_detour(points, cfg, active_side=None, visibility_history=None):
     """Return status/side/path/reason/diagnostics.
 
     This function is called only for NEW paths. The caller retains its
@@ -151,6 +151,24 @@ def choose_local_detour(points, cfg, active_side=None):
     pts = pts[(pts[:, 0] >= 1.0) & (pts[:, 0] <= max_horizon + 1.0)]
     if len(pts) < int(cfg.get("min_points", 80)):
         return dict(fail, reason="SPARSE_FORWARD_SCAN")
+
+    # Historic returns are aligned into current ego frame by the worker.
+    # They supplement visibility and ADD collision evidence; only the
+    # latest scan chooses the obstacle geometry / initiates the maneuver.
+    observed = pts
+    history_count = 0
+    if visibility_history is not None:
+        past = np.asarray(visibility_history, dtype=float)
+        if past.ndim == 2 and past.shape[1] >= 3:
+            past = past[np.isfinite(past[:, :3]).all(axis=1), :3]
+            past = past[
+                (past[:, 2] > float(cfg.get("z_min", -1.45))) &
+                (past[:, 2] < float(cfg.get("z_max", 1.25))) &
+                (past[:, 0] >= 1.) & (past[:, 0] <= max_horizon + 1.)
+            ]
+            if len(past):
+                observed = np.vstack((pts[:, :3], past))
+                history_count = len(past)
 
     clearance = (float(cfg.get("vehicle_half_width_m", 0.9)) +
                  float(cfg.get("margin_m", 0.45)))
@@ -199,9 +217,9 @@ def choose_local_detour(points, cfg, active_side=None):
     side_counts = {}
     for sign, name in ((1, "LEFT"), (-1, "RIGHT")):
         side_counts[name] = int(np.count_nonzero(
-            (pts[:, 1] * sign >= clearance) &
-            (pts[:, 1] * sign <= float(cfg.get("side_observation_max_m", 7.0))) &
-            (pts[:, 0] >= 2.0)
+            (observed[:, 1] * sign >= clearance) &
+            (observed[:, 1] * sign <= float(cfg.get("side_observation_max_m", 7.0))) &
+            (observed[:, 0] >= 2.0)
         ))
     if min(side_counts.values()) < n:
         return dict(fail, reason="SIDE_WALL_NOT_OBSERVED")
@@ -245,10 +263,10 @@ def choose_local_detour(points, cfg, active_side=None):
         far_observed = {}
         for sign, name in ((1, "LEFT"), (-1, "RIGHT")):
             far_observed[name] = int(np.count_nonzero(
-                (pts[:, 0] >= candidate_return_end - endpoint_window) &
-                (pts[:, 0] <= candidate_return_end + 1.0) &
-                (pts[:, 1] * sign >= clearance) &
-                (pts[:, 1] * sign <= float(
+                (observed[:, 0] >= candidate_return_end - endpoint_window) &
+                (observed[:, 0] <= candidate_return_end + 1.0) &
+                (observed[:, 1] * sign >= clearance) &
+                (observed[:, 1] * sign <= float(
                     cfg.get("side_observation_max_m", 7.0)))
             ))
         return_visible = (within_horizon and
@@ -259,6 +277,7 @@ def choose_local_detour(points, cfg, active_side=None):
             "return_end_m": round(candidate_return_end, 2),
             "return_delay_m": round(delay, 2),
             "far_side_points": far_observed,
+            "history_obstacle_points": history_count,
             "required_points_per_side": endpoint_min,
             "visibility_ok": return_visible,
             "reason": ("OBSERVED" if return_visible else
@@ -277,7 +296,7 @@ def choose_local_detour(points, cfg, active_side=None):
                     candidate_return_start, candidate_return_end
                 )
                 distances, stage_hits, stage_minima = _sweep_metrics(
-                    pts[:, :2], path, clearance, shift_end,
+                    observed[:, :2], path, clearance, shift_end,
                     candidate_return_start
                 )
                 hits = int(sum(stage_hits.values()))
