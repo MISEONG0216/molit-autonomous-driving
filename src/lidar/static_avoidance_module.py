@@ -493,6 +493,12 @@ def main():
                             )
                             entry_last_report = entry_report
                         if not entry_ready:
+                            # Discard provisional paths generated during the
+                            # stop gate; replan from a fresh observed scan
+                            # only after the gate releases.
+                            shadow_locked_path = None
+                            shadow_side = None
+                            shadow_plan_last_report = None
                             plan = PlanResult(
                                 "STOP_REQUIRED", np.empty((0, 3)), None, None,
                                 0.0, "ENTRY_OBSERVE_" + entry_reason,
