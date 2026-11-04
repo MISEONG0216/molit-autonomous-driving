@@ -132,7 +132,12 @@
         5
       ]
     ],
-    "crossing_speed_note": "User WP900-940 pedestrian crossing. Early deceleration WP820-879 cap20; WP880-899 cap10; WP900-940 cap5 km/h; pedestrian full stop and stale-data full stop retained. WP gate uses valid GPS path proximity."
+    "crossing_speed_note": "User WP900-940 pedestrian crossing. Early deceleration WP820-879 cap20; WP880-899 cap10; WP900-940 cap5 km/h; pedestrian full stop and stale-data full stop retained. WP gate uses valid GPS path proximity.",
+    "horizontal_roi_ratio": [
+      0.2,
+      0.8
+    ],
+    "horizontal_roi_note": "For COCO person class 0 only, count/risk/STOP only when detected bounding-box horizontal CENTER lies within 20%-80% of original front camera width (central 60%). Persons outside ignored by pedestrian decision; highway vehicle ROI and signal/lane camera perception unchanged. Detection still runs on shared frame, this is output filtering, not strict pixel masking. Crossing pedestrians might be missed before entering center ROI."
   },
   "highway_follow": {
     "zones_wp": [
