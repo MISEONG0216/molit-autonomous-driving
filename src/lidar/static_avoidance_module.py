@@ -457,15 +457,15 @@ def main():
                                 "second_survey_match"].get("confirmation_scans", 2))
                             if (local["status"] == "AVOIDING" and
                                     second_match_streak < required):
-                                local = dict(local, status="STOP_REQUIRED",
-                                             path=[], reason="SECOND_MATCH_CONFIRMING")
+                                local = dict(local, status="CLEAR",
+                                             path=[], reason="SECOND_MATCH_CONFIRMING_CAMERA")
                             if second_match_streak >= required and scan_count % 10 == 0:
                                 print("[V49 MATCH] confirmed={} required={} reason={}".format(
                                     second_match_streak, required, local["reason"]), flush=True)
                         report = (local["status"], local["reason"])
                         if report != shadow_plan_last_report or scan_count % 25 == 0:
                             print(
-                                "[SHADOW V51] scan={} result={} reason={}".format(
+                                "[SHADOW V53] scan={} result={} reason={}".format(
                                     scan_count, local["status"], local["reason"]
                                 )
                             )
