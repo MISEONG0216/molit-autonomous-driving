@@ -245,5 +245,12 @@
       1.5,
       3
     ]
+  },
+  "gps_shadow_entry_hold": {
+    "enabled": true,
+    "minimum_hold_sec": 2,
+    "minimum_stable_sec": 0.8,
+    "minimum_good_scans": 5,
+    "note": "At first GPS-shadow activation, STOP with main's existing brake command. Once pose is stable and at least five consecutive fresh scans have >=40 forward points, >=8 LiDAR points on each side, and no central obstacles within 8m, allow the existing V44 shadow planner to operate. No sensor fusion or new path permission; no blind crossing. If conditions not met, stay stopped."
   }
 }
