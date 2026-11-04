@@ -58,6 +58,43 @@ def _smoothstep(t):
     return t * t * (3.0 - 2.0 * t)
 
 
+def _max_discrete_curvature(path):
+    """Estimate maximum turn curvature (1/metre) on a sampled XY polyline.
+
+    Geometric penalty only; not a vehicle steering feasibility guarantee.
+    """
+    xy = np.asarray(path, dtype=float)[:, :2]
+    if len(xy) < 3:
+        return float("inf")
+    a = xy[1:-1] - xy[:-2]
+    b = xy[2:] - xy[1:-1]
+    la = np.linalg.norm(a, axis=1)
+    lb = np.linalg.norm(b, axis=1)
+    cross = np.abs(a[:, 0]*b[:, 1] - a[:, 1]*b[:, 0])
+    chord = np.linalg.norm(xy[2:] - xy[:-2], axis=1)
+    denominator = np.maximum(la * lb * chord, 1e-9)
+    return float(np.max(2.0 * cross / denominator))
+
+
+def score_verified_candidate(min_distance, clearance, max_curvature,
+                             offset, delay, cfg):
+    """Rank ONLY candidates already verified clear and observable.
+
+    Reward excess clearance, penalize sharp curvature/lateral deviation and
+    unnecessary return delay. Cap clearance reward to avoid favouring overly
+    wide routes merely because an obstacle is far away.
+    """
+    if not all(np.isfinite(v) for v in (
+            min_distance, clearance, max_curvature, offset, delay)):
+        return float("-inf")
+    excess = max(0.0, min(min_distance - clearance,
+                          float(cfg.get("score_clearance_cap_m", 1.0))))
+    return (float(cfg.get("score_clearance_weight", 2.0)) * excess
+            - float(cfg.get("score_curvature_weight", 0.8)) * max_curvature
+            - float(cfg.get("score_offset_weight", 0.2)) * offset
+            - float(cfg.get("score_delay_weight", 0.03)) * delay)
+
+
 def _path(side, cfg, offset=None, shift_end=None, return_start=None,
           return_end=None):
     """Polyline in forward-left metres, 0.5m sampling for legacy controller."""
@@ -180,11 +217,11 @@ def choose_local_detour(points, cfg, active_side=None):
     endpoint_window = float(cfg.get("end_visibility_window_m", 3.0))
     endpoint_min = int(cfg.get("end_visibility_min_points", 3))
     offsets = [float(v) for v in cfg.get(
-        "candidate_offsets_m", [1.6, 2.0, 2.4, 2.8])]
+        "candidate_offsets_m", [1.6, 1.8, 2.0, 2.2, 2.4, 2.6, 2.8])]
     diagnostic_offsets = [float(v) for v in cfg.get(
         "diagnostic_offsets_m", [2.9, 3.0, 3.1, 3.2])]
     delay_options = [float(v) for v in cfg.get(
-        "return_delay_options_m", [0.0, 1.5, 3.0])]
+        "return_delay_options_m", [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0])]
     if (not offsets or not delay_options or
             any(not np.isfinite(v) or v <= 0.0
                 for v in offsets + diagnostic_offsets) or
@@ -249,9 +286,18 @@ def choose_local_detour(points, cfg, active_side=None):
                 reason = ("SWEEP_COLLISION" if not collision_free else
                           "RETURN_CORRIDOR_UNOBSERVED" if not return_visible else
                           "DIAGNOSTIC_ONLY" if diagnostic_only else "SAFE")
+                min_distance = float(np.min(distances))
+                max_curvature = _max_discrete_curvature(path)
+                candidate_score = (score_verified_candidate(
+                    min_distance, clearance, max_curvature, offset,
+                    delay, cfg) if (collision_free and return_visible
+                                    and not diagnostic_only) else None)
                 diagnostics.append({
                     "side": "LEFT" if side == 1 else "RIGHT",
                     "offset_m": offset,
+                    "score": (round(candidate_score, 5)
+                              if candidate_score is not None else None),
+                    "max_curvature_1pm": round(max_curvature, 5),
                     "diagnostic_only": diagnostic_only,
                     "return_delay_m": round(delay, 2),
                     "shift_end_m": round(shift_end, 2),
@@ -260,16 +306,18 @@ def choose_local_detour(points, cfg, active_side=None):
                     "far_side_points": far_observed,
                     "visibility_ok": return_visible,
                     "hit_points": hits,
-                    "min_distance_m": round(float(np.min(distances)), 3),
+                    "min_distance_m": round(min_distance, 3),
                     "stage_hits": stage_hits,
                     "stage_min_distance_m": stage_minima,
                     "reason": reason,
                 })
-                if collision_free and return_visible and not diagnostic_only:
-                    # Minimal deviation first, then earlier return.
-                    # Never let a 2.9m+ diagnostic candidate steer.
+                if candidate_score is not None:
+                    # Evaluate score ONLY after original sweep/visibility gates.
+                    # Never let diagnostic-only offsets authorize steering.
                     candidates.append((
-                        offset, delay, 0 if side == 1 else 1, side, path
+                        -candidate_score, offset, delay,
+                        0 if side == 1 else 1, side, path,
+                        min_distance, max_curvature
                     ))
     if not candidates:
         return dict(
@@ -278,9 +326,13 @@ def choose_local_detour(points, cfg, active_side=None):
                     else "RETURN_CORRIDOR_UNOBSERVED"),
             diagnostics=diagnostics,
         )
-    offset, delay, _, side, path = min(candidates, key=lambda item: item[:3])
+    neg_score, offset, delay, _, side, path, min_distance, max_curvature = min(
+        candidates, key=lambda item: item[:4])
     return {"status": "AVOIDING", "side": side, "path": path.tolist(),
             "selected_offset_m": offset, "selected_return_delay_m": delay,
+            "selected_score": round(-neg_score, 5),
+            "selected_min_distance_m": round(min_distance, 3),
+            "selected_max_curvature_1pm": round(max_curvature, 5),
             "reason": "EGO_LIDAR_ADAPTIVE_LEFT" if side == 1
                       else "EGO_LIDAR_ADAPTIVE_RIGHT",
             "diagnostics": diagnostics}
