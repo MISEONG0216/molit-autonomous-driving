@@ -108,7 +108,7 @@ def open_log():
         "follow_zone", "follow_state", "follow_risk", "follow_grade",
         "follow_speed_cap_kmh", "follow_age_sec", "follow_vehicles",
         "gps_mode", "gps_shadow_sec", "lane_valid", "lane_confidence",
-        "lane_steering_rad", "shadow_stop",
+        "lane_steering_rad", "shadow_stop", "static_reason",
     ])
     return path, f, w
 
@@ -965,6 +965,7 @@ def main():
                 gps_mode, f"{shadow_sec:.3f}",
                 int(lane_fresh), f"{lane_result['confidence']:.3f}",
                 f"{lane_result['steering']:.4f}", int(shadow_stop),
+                static_plan.get("reason", "") if static_fresh else "NO_FRESH_RESULT",
             ])
 
             print("\033[2J\033[H", end="")
