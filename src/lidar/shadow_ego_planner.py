@@ -280,6 +280,7 @@ def choose_local_detour(points, cfg, active_side=None):
         )
     offset, delay, _, side, path = min(candidates, key=lambda item: item[:3])
     return {"status": "AVOIDING", "side": side, "path": path.tolist(),
+            "selected_offset_m": offset, "selected_return_delay_m": delay,
             "reason": "EGO_LIDAR_ADAPTIVE_LEFT" if side == 1
                       else "EGO_LIDAR_ADAPTIVE_RIGHT",
             "diagnostics": diagnostics}
