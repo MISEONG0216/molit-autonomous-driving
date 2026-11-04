@@ -416,6 +416,19 @@ def main():
                                 0.0, local["reason"]
                             )
                             latch_state = "EGO_LIDAR_STOP_"+local["reason"]
+                    # Independent short-range emergency guard for the CLEAR
+                    # state. A planner defect or a stale one-scan tail release
+                    # must not permit continued lane driving into close returns.
+                    # An already verified AVOIDING path keeps its separate
+                    # full swept-path revalidation.
+                    if (plan.status == "CLEAR" and
+                            close_forward_collision(vehicle_points, wall_cfg)):
+                        plan = PlanResult(
+                            "STOP_REQUIRED", np.empty((0, 3)), None,
+                            None, 0.0, "SHADOW_CLOSE_FORWARD_STOP"
+                        )
+                        shadow_verified = False
+                        latch_state = "EGO_LIDAR_EMERGENCY_FORWARD_STOP"
                     raw_plan = plan
                 else:
                     # GPS is valid: preserve original global static planner.
