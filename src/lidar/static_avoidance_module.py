@@ -36,6 +36,7 @@ from integration.static_avoidance_io import configured_avoidance_speed_kmh
 from static_avoidance_path_latch import AvoidancePathLatch
 from shadow_wall_guard import pick_shadow_detour, check_wall_clearance, close_forward_collision
 from shadow_ego_planner import choose_local_detour
+from post_detour_clearance import evaluate_handoff_clearance
 
 NETWORK_FILE = ROOT / "config" / "integration_network.json"
 GLOBAL_PATH_FILE = ROOT / "path" / "2026_molit_comp_global_path.txt"
@@ -256,37 +257,13 @@ def main():
                 forward, left, delta_yaw = delta_ego(previous_pose, pose)
                 previous_pose = pose
                 vehicle_points = lidar_to_vehicle(points)
+                handoff_evidence = None
                 if gps_shadow:
-                    # Positive forward corridor evidence; an empty scan alone
-                    # is NOT proof of free space. Require side observations
-                    # and no observed returns in the ego footprint up to 12m.
-                    cloud = np.asarray(vehicle_points, dtype=float)
-                    finite_cloud = cloud[
-                        np.isfinite(cloud).all(axis=1)
-                    ]
-                    roi = finite_cloud[
-                        (finite_cloud[:, 0] >= 1.0)
-                        & (finite_cloud[:, 0] <= 12.0)
-                        & (finite_cloud[:, 2] >= float(ego_cfg.get("z_min", -1.45)))
-                        & (finite_cloud[:, 2] <= float(ego_cfg.get("z_max", 1.25)))
-                    ]
-                    half = (float(ego_cfg.get("vehicle_half_width_m", 0.9))
-                            + float(ego_cfg.get("margin_m", 0.45)))
-                    central_hits = np.count_nonzero(
-                        np.abs(roi[:, 1]) <= half
-                    )
-                    left_support = np.count_nonzero(
-                        (roi[:, 0] >= 4.0) & (roi[:, 1] >= half)
-                        & (roi[:, 1] <= 7.0)
-                    )
-                    right_support = np.count_nonzero(
-                        (roi[:, 0] >= 4.0) & (roi[:, 1] <= -half)
-                        & (roi[:, 1] >= -7.0)
-                    )
-                    forward_clear_verified = bool(
-                        len(roi) >= 80 and central_hits == 0
-                        and left_support >= 8 and right_support >= 8
-                    )
+                    # V50: only post-detour handoff uses sparse far-field
+                    # tolerance. Near returns still block the handoff.
+                    handoff_evidence = evaluate_handoff_clearance(
+                        vehicle_points, ego_cfg)
+                    forward_clear_verified = bool(handoff_evidence["verified"])
                 obstacles, _, _ = detector.detect(vehicle_points)
                 tracked = tracker.update(
                     obstacles, dt, delta_x=forward, delta_y=left, delta_yaw=delta_yaw
@@ -438,8 +415,28 @@ def main():
                             post_detour_done = True
                         else:
                             handoff_active = True
-                            if forward_clear_verified and not close_forward_collision(
-                                    vehicle_points, wall_cfg):
+                            emergency_close = close_forward_collision(
+                                vehicle_points, wall_cfg)
+                            if scan_count % 5 == 0 or not forward_clear_verified:
+                                print(
+                                    "[POST DETOUR V50] scan={} wp={} verdict={} "
+                                    "reason={} near_1_4={} far_4_12={} "
+                                    "allowed_far={} sides=L{}/R{} "
+                                    "roi={} emergency_close={}".format(
+                                        scan_count, waypoint_index,
+                                        "PASS" if forward_clear_verified else "BLOCK",
+                                        handoff_evidence["reason"],
+                                        handoff_evidence["near_hits"],
+                                        handoff_evidence["far_hits"],
+                                        int(ego_cfg.get(
+                                            "post_detour_far_allowed_points", 2)),
+                                        handoff_evidence["left_support"],
+                                        handoff_evidence["right_support"],
+                                        handoff_evidence["roi_points"],
+                                        emergency_close,
+                                    ), flush=True,
+                                )
+                            if forward_clear_verified and not emergency_close:
                                 plan = PlanResult(
                                     "CLEAR", np.empty((0, 3)), None, None,
                                     0.0, "EGO_POST_DETOUR_VERIFIED_LANE"
