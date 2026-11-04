@@ -35,6 +35,11 @@ class TemporalShadowObservations:
         cells = np.floor(cloud / max(0.05, self.voxel_m)).astype(np.int32)
         _, unique = np.unique(cells, axis=0, return_index=True)
         cloud = cloud[unique]
+        # Bound stored returns so temporal evidence cannot overwhelm
+        # the real-time path sweep on lower-power competition laptops.
+        if len(cloud) > 2400:
+            select = np.linspace(0, len(cloud)-1, 2400).astype(int)
+            cloud = cloud[select]
         x, y, yaw = pose
         c, s = math.cos(yaw), math.sin(yaw)
         xy = np.empty_like(cloud)
