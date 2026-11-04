@@ -56,7 +56,7 @@ class ShadowV40Tests(unittest.TestCase):
         self.assertEqual(result["status"], "AVOIDING", result["reason"])
         chosen = [d for d in result["diagnostics"] if d["reason"] == "SAFE"]
         self.assertTrue(chosen)
-        self.assertGreater(chosen[0]["return_start_m"], 10.0)
+        self.assertGreaterEqual(chosen[0]["return_start_m"], 16.5)
         self.assertGreater(chosen[0]["return_end_m"], 15.0)
 
     def test_unseen_return_stops(self):
