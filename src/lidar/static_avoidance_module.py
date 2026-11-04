@@ -164,6 +164,8 @@ def main():
     shadow_side = None
     shadow_locked_path = None
     shadow_plan_last_report = None
+    post_detour_origin = None
+    post_detour_done = False
 
     print("[STATIC ZONES] " + str(static_zones))
     print(f"[STATIC AVOID SPEED] {avoidance_speed_kmh:.1f} km/h")
@@ -231,6 +233,9 @@ def main():
             planner_enabled = bool(inside_zone or latch.active)
             shadow_verified = False
             forward_clear_verified = False
+            if not gps_shadow:
+                post_detour_origin = None
+                post_detour_done = False
             if not planner_enabled:
                 # Suppress detection, tracking and path generation elsewhere.
                 obstacles, tracked = [], []
@@ -337,6 +342,8 @@ def main():
                                     "release_max_front_points", 5)):
                                 shadow_locked_path = None
                                 shadow_side = None
+                                post_detour_origin = (ego_x, ego_y)
+                                post_detour_done = False
                                 plan = PlanResult(
                                     "CLEAR", np.empty((0, 3)), None, None,
                                     0.0, "EGO_DETOUR_TAIL_RELEASE"
@@ -414,7 +421,38 @@ def main():
                                 )
                                 shadow_verified = False
                                 latch_state = "EGO_LIDAR_BLOCKED_"+reason
-                    if shadow_locked_path is None and latch_state != "EGO_LIDAR_TAIL_RELEASED":
+                    # Once the originally verified detour has finished,
+                    # avoid immediately creating another detour from the
+                    # same object's long returns. This handoff requires
+                    # positive clear-corridor evidence on EVERY fresh scan;
+                    # unknown forward space remains STOP, not free.
+                    handoff_active = False
+                    if post_detour_origin is not None:
+                        travelled = math.hypot(
+                            ego_x - post_detour_origin[0],
+                            ego_y - post_detour_origin[1],
+                        )
+                        if travelled >= float(ego_cfg.get(
+                                "post_detour_handoff_distance_m", 8.0)):
+                            post_detour_origin = None
+                            post_detour_done = True
+                        else:
+                            handoff_active = True
+                            if forward_clear_verified and not close_forward_collision(
+                                    vehicle_points, wall_cfg):
+                                plan = PlanResult(
+                                    "CLEAR", np.empty((0, 3)), None, None,
+                                    0.0, "EGO_POST_DETOUR_VERIFIED_LANE"
+                                )
+                                latch_state = "EGO_LIDAR_POST_DETOUR_CLEAR"
+                            else:
+                                plan = PlanResult(
+                                    "STOP_REQUIRED", np.empty((0, 3)), None,
+                                    None, 0.0, "POST_DETOUR_FORWARD_UNVERIFIED"
+                                )
+                                latch_state = "EGO_LIDAR_POST_DETOUR_STOP"
+                    if (shadow_locked_path is None and not handoff_active
+                            and latch_state != "EGO_LIDAR_TAIL_RELEASED"):
                         local = choose_local_detour(vehicle_points, ego_cfg)
                         report = (local["status"], local["reason"])
                         if report != shadow_plan_last_report or scan_count % 25 == 0:
@@ -577,6 +615,7 @@ def main():
                 "zone_active": zone_active,
                 "shadow_wall_verified": bool(gps_shadow and shadow_verified and status == "AVOIDING"),
                 "forward_clear_verified": bool(gps_shadow and forward_clear_verified),
+                "post_detour_handoff": bool(gps_shadow and post_detour_origin is not None),
             }
             data = json.dumps(packet, separators=(",", ":"), allow_nan=False).encode("utf-8")
             if len(data) > 60000:
