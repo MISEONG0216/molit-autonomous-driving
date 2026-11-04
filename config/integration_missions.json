@@ -245,5 +245,19 @@
       1.5,
       3
     ]
+  },
+  "gps_shadow_right_shift": {
+    "enabled": true,
+    "delay_sec": 5,
+    "min_wp": 3850,
+    "max_wp": 3970,
+    "offsets_m": [
+      2.4,
+      2.8
+    ],
+    "shift_start_m": 1.5,
+    "shift_end_m": 10,
+    "horizon_m": 18,
+    "note": "One-shot RIGHT lane change is proposed 5s after the first LEFT shadow detour is RELEASED. Only triggers in WP3850..3970, with fresh CLEAR planner, no close obstacle and LiDAR-verified full swept path and both observed boundaries. No unconditional blind steering. Keeps 5km/h cap. All lane/legal/drivable boundaries must be verified in MORAI."
   }
 }
