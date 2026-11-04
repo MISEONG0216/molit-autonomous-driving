@@ -274,6 +274,10 @@
     "score_offset_weight": 0.2,
     "score_delay_weight": 0.03,
     "post_detour_handoff_distance_m": 8,
-    "post_detour_handoff_speed_kmh": 3
+    "post_detour_handoff_speed_kmh": 3,
+    "post_detour_near_limit_m": 4,
+    "post_detour_far_allowed_points": 2,
+    "post_detour_min_roi_points": 80,
+    "post_detour_min_side_points": 8
   }
 }
