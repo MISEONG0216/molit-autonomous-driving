@@ -387,7 +387,7 @@ def main():
                         report = (local["status"], local["reason"])
                         if report != shadow_plan_last_report or scan_count % 25 == 0:
                             print(
-                                "[SHADOW V40] scan={} result={} reason={}".format(
+                                "[SHADOW V44] scan={} result={} reason={}".format(
                                     scan_count, local["status"], local["reason"]
                                 )
                             )
@@ -424,6 +424,15 @@ def main():
                             shadow_plan_last_report = report
                         shadow_verified = local["status"] == "AVOIDING"
                         if shadow_verified:
+                            print(
+                                "[SHADOW SELECTED] side={} offset={:.1f}m "
+                                "return_delay={:.1f}m (full sweep + observed endpoint)".format(
+                                    "LEFT" if local["side"] == 1 else "RIGHT",
+                                    float(local.get("selected_offset_m", 0.0)),
+                                    float(local.get("selected_return_delay_m", 0.0)),
+                                ),
+                                flush=True,
+                            )
                             shadow_side = local["side"]
                             xy = np.asarray(local["path"], dtype=float)
                             cy, sy = math.cos(ego_yaw), math.sin(ego_yaw)
