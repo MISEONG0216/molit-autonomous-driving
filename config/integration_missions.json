@@ -238,7 +238,7 @@
     "z_max": 1.25,
     "emergency_forward_m": 2.5,
     "obstacle_min_forward_m": 3,
-    "obstacle_max_forward_m": 16,
+    "obstacle_max_forward_m": 14,
     "obstacle_point_threshold": 3,
     "allowed_points": 0,
     "avoidance_speed_kmh": 5,
