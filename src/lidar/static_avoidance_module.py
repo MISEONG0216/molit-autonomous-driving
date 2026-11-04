@@ -156,6 +156,7 @@ def main():
     pose = None
     pose_time = 0.0
     gps_shadow = False
+    lane_steering = None
     previous_pose = None
     previous_scan_timestamp = None
     last_scan_timestamp = None
@@ -204,10 +205,17 @@ def main():
                     # Shadow pose is bounded dead-reckoning from main.
                     # Keep original obstacle detection/tracking/local planner.
                     try:
-                        gps_shadow = (json.loads(raw.decode("ascii"))
-                                      .get("gps_shadow") is True)
-                    except (ValueError, UnicodeError, AttributeError):
+                        pose_message = json.loads(raw.decode("ascii"))
+                        gps_shadow = pose_message.get("gps_shadow") is True
+                        steering_field = pose_message.get("lane_steering")
+                        lane_steering = None
+                        if (gps_shadow and pose_message.get("lane_valid") is True
+                                and type(steering_field) in (int, float)
+                                and math.isfinite(steering_field)):
+                            lane_steering = float(steering_field)
+                    except (ValueError, UnicodeError, AttributeError, TypeError):
                         gps_shadow = False
+                        lane_steering = None
 
             if pose is None or time.monotonic() - pose_time > POSE_TIMEOUT_SEC:
                 time.sleep(0.02)
@@ -278,7 +286,8 @@ def main():
                     # V50: only post-detour handoff uses sparse far-field
                     # tolerance. Near returns still block the handoff.
                     handoff_evidence = evaluate_handoff_clearance(
-                        vehicle_points, ego_cfg)
+                        vehicle_points, ego_cfg,
+                        lane_steering=lane_steering)
                     forward_clear_verified = bool(handoff_evidence["verified"])
                 obstacles, _, _ = detector.detect(vehicle_points)
                 tracked = tracker.update(
@@ -441,10 +450,11 @@ def main():
                                 vehicle_points, wall_cfg)
                             if scan_count % 5 == 0 or not forward_clear_verified:
                                 print(
-                                    "[POST DETOUR V55] scan={} wp={} verdict={} "
+                                    "[POST DETOUR V56] scan={} wp={} verdict={} "
                                     "reason={} near_1_4={} far_4_12={} "
                                     "allowed_far={} sides=L{}/R{} "
-                                    "roi={} emergency_close={}".format(
+                                    "roi={} emergency_close={} "
+                                    "lane_steer={} path_margin={} path_end_offset={}".format(
                                         scan_count, waypoint_index,
                                         "PASS" if forward_clear_verified else "BLOCK",
                                         handoff_evidence["reason"],
@@ -456,6 +466,11 @@ def main():
                                         handoff_evidence["right_support"],
                                         handoff_evidence["roi_points"],
                                         emergency_close,
+                                        "{:.3f}".format(lane_steering)
+                                        if lane_steering is not None else "NONE",
+                                        handoff_evidence.get("trajectory_margin_m"),
+                                        handoff_evidence.get(
+                                            "trajectory_end_lateral_m"),
                                     ), flush=True,
                                 )
                             if forward_clear_verified and not emergency_close:
