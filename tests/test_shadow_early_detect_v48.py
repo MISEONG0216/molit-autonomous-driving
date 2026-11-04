@@ -10,8 +10,8 @@ class V48Tests(unittest.TestCase):
         self.assertEqual(CFG["diagnostic_offsets_m"], [])
         self.assertEqual(2*len(CFG["candidate_offsets_m"])*len(CFG["return_delay_options_m"]), 18)
     def test_detect_earlier_with_collision_gate(self):
-        self.assertEqual(CFG["obstacle_max_forward_m"], 14)
-        self.assertEqual(CFG["obstacle_point_threshold"], 2)
+        self.assertEqual(CFG["obstacle_max_forward_m"], 17)
+        self.assertEqual(CFG["obstacle_point_threshold"], 3)
         self.assertEqual(CFG["min_side_points"], 5)
         self.assertEqual(CFG["allowed_points"], 0)
         self.assertEqual(CFG["end_visibility_min_points"], 3)
