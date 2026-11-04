@@ -87,7 +87,7 @@ def evaluate_handoff_clearance(vehicle_points, cfg, lane_steering=None):
         report["reason"] = "BOTH_SIDES_UNOBSERVED"
     elif far_hits > max_far:
         if lane_steering is None:
-            report["reason"] = "FAR_HITS_NO_LANE_TARGET"
+            report["reason"] = "FAR_CENTER_RETURNS"
             return report
         clearance = _trajectory_clearance(roi, float(lane_steering), cfg, half)
         if clearance is None:
