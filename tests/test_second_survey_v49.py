@@ -100,9 +100,9 @@ class SecondSurveyV49Tests(unittest.TestCase):
         source=p.read_text(encoding="utf-8")
         ast.parse(source)
         self.assertIn('template_active_id == "SECOND_RIGHT"', source)
-        self.assertIn('template_active_id = "SECOND_RETURN"', source)
+        self.assertNotIn('template_active_id = "SECOND_RETURN"', source)
         self.assertIn("second_match_streak += 1", source)
-        self.assertIn('latch_state = "EGO_LIDAR_NEW_SECOND_RETURN"', source)
+        self.assertIn("handoff=CAMERA", source)
         self.assertIn("template_completed_count += 1", source)
 
 
