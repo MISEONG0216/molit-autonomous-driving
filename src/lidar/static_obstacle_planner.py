@@ -203,14 +203,20 @@ class StaticObstaclePlanner:
         )
         max_abs_offset = float(np.max(np.abs(offsets)))
 
-        # Conservative circular footprint for the first implementation.
+        # Conservative circular footprint, measured against every sample.
         safe_radius = (
             self.cfg["vehicle_width_m"] / 2.0
             + obs.width / 2.0
             + self.cfg["safety_margin_m"]
         )
-        distances = np.linalg.norm(path[:, :2] - np.array([obs.x, obs.y]), axis=1)
-        min_clearance = float(np.min(distances))
+        xy = path[:, :2]
+        center = np.array([obs.x, obs.y], dtype=float)
+        starts, vectors = xy[:-1], xy[1:] - xy[:-1]
+        lens2 = np.maximum(np.einsum("ij,ij->i", vectors, vectors), 1e-12)
+        t = np.clip(np.einsum("ij,ij->i", center - starts, vectors)
+                    / lens2, 0.0, 1.0)
+        closest = starts + t[:, None] * vectors
+        min_clearance = float(np.min(np.linalg.norm(closest - center, axis=1)))
 
         boundary_ok = max_abs_offset <= boundary_limit
         collision_ok = min_clearance >= safe_radius
@@ -233,6 +239,39 @@ class StaticObstaclePlanner:
     def _is_safe(self, path: np.ndarray, offsets: np.ndarray, obs: Obstacle) -> bool:
         return bool(self._candidate_safety_diagnostic(path, offsets, obs)["safe"])
 
+    def _all_obstacles_clear(self, path, obstacles):
+        """Reject any candidate sweeping through another detected object.
+
+        The primary obstacle is not necessarily the only blocker.  We use
+        segment-to-centre distance instead of sparse waypoint distances.
+        """
+        xy = np.asarray(path, dtype=float)[:, :2]
+        for obs in obstacles:
+            if obs.confidence < 0.5:
+                continue
+            if obs.width < float(self.cfg.get("min_static_obstacle_width_m", 0.0)):
+                continue
+            if obs.height < float(self.cfg.get("min_static_obstacle_height_m", 0.0)):
+                continue
+            if not all(math.isfinite(float(v)) for v in (
+                    obs.x, obs.y, obs.width, obs.height)):
+                return False
+            safe_radius = (
+                self.cfg["vehicle_width_m"] / 2.0
+                + obs.width / 2.0
+                + self.cfg["safety_margin_m"]
+            )
+            center = np.array([obs.x, obs.y], dtype=float)
+            starts = xy[:-1]
+            vectors = xy[1:] - starts
+            lens2 = np.maximum(np.einsum("ij,ij->i", vectors, vectors), 1e-12)
+            t = np.clip(np.einsum("ij,ij->i", center - starts, vectors)
+                        / lens2, 0.0, 1.0)
+            closest = starts + t[:, None] * vectors
+            if np.min(np.linalg.norm(closest - center, axis=1)) < safe_radius:
+                return False
+        return True
+
     def plan(
         self, ego_x: float, ego_y: float, obstacles: List[Obstacle]
     ) -> PlanResult:
@@ -248,31 +287,39 @@ class StaticObstaclePlanner:
         obs, obs_idx, obs_d = selected
         candidates = []
         candidate_diagnostics = []
+        # Always evaluate BOTH lateral directions; positive is LEFT and
+        # negative is RIGHT in the path-normal coordinate system.
         for offset in self.cfg["candidate_offsets_m"]:
-            candidate, offsets = self._candidate_path(ego_index, obs_idx, float(offset))
+            offset = float(offset)
+            if abs(offset) < 1e-6:
+                continue
+            candidate, offsets = self._candidate_path(ego_index, obs_idx, offset)
             diagnostic = self._candidate_safety_diagnostic(candidate, offsets, obs)
-            diagnostic["offset_m"] = float(offset)
+            diagnostic["offset_m"] = offset
+            if diagnostic["safe"] and not self._all_obstacles_clear(
+                    candidate, obstacles):
+                diagnostic["safe"] = False
+                diagnostic["reason"] = "OTHER_OBSTACLE"
             candidate_diagnostics.append(diagnostic)
             if diagnostic["safe"]:
-                # Prefer the opposite side of the obstacle, then smaller displacement.
+                # Avoid a side choice based on sign alone.  Prefer the side
+                # opposite the primary obstacle; then favour less deviation.
                 opposite_penalty = 0.0 if offset * obs_d <= 0.0 else 10.0
-                candidates.append((opposite_penalty + abs(offset), offset, candidate))
+                candidates.append((opposite_penalty + abs(offset), abs(offset),
+                                   offset, candidate))
 
         if not candidates:
             return PlanResult(
                 "STOP_REQUIRED", self.path[default_indices].copy(), obs.id, None, 0.0,
-                "No collision-free candidate inside the configured drivable boundary",
+                "Both left/right candidate corridors blocked or outside road boundary",
                 candidate_diagnostics,
             )
 
-        _, offset, local_path = min(candidates, key=lambda item: item[0])
+        _, _, offset, local_path = min(candidates, key=lambda item: item[:2])
         return PlanResult(
-            "AVOIDING",
-            local_path,
-            obs.id,
+            "AVOIDING", local_path, obs.id,
             "LEFT" if offset > 0.0 else "RIGHT",
             self.avoidance_speed_kph,
-            "Collision-free mock avoidance path generated",
+            "Verified bidirectional static avoidance candidate",
             candidate_diagnostics,
         )
-
