@@ -323,7 +323,11 @@ def main():
                             # Revalidate the REMAINING locked route against
                             # the newest vehicle-frame wall returns. Aborting
                             # is safer than swapping sides mid-avoidance.
-                            remaining = shadow_locked_path[nearest:]
+                            # Retain the segment immediately BEFORE the
+                            # nearest waypoint. Otherwise slicing at nearest
+                            # may discard the segment the ego is actually on,
+                            # causing a false alignment failure near turns.
+                            remaining = shadow_locked_path[max(0, nearest - 1):]
                             # The original V34 checker required >=6m of
                             # remaining route and would STOP permanently near
                             # the endpoint. Scale required lookahead to actual
@@ -337,10 +341,31 @@ def main():
                             remaining_cfg["minimum_path_ahead_m"] = min(
                                 6.0, max(1.0, remaining_forward - 1.5)
                             )
+                            alignment = {}
                             wall_ok, reason = check_wall_clearance(
                                 remaining, (ego_x, ego_y, ego_yaw),
-                                vehicle_points, remaining_cfg
+                                vehicle_points, remaining_cfg,
+                                alignment_diagnostics=alignment,
                             )
+                            if alignment and (not wall_ok or scan_count % 20 == 0):
+                                print(
+                                    "[SHADOW ALIGN] scan={} status={} "
+                                    "segment_error={:.3f}m vertex_error={:.3f}m "
+                                    "limit={:.2f}m seg={} "
+                                    "forward={:.2f}m left={:.2f}m "
+                                    "reason={} (DR pose, not absolute localization accuracy)".format(
+                                        scan_count,
+                                        "PASS" if wall_ok else "REJECT",
+                                        alignment["segment_error_m"],
+                                        alignment["vertex_error_m"],
+                                        alignment["alignment_limit_m"],
+                                        alignment["nearest_segment_index"],
+                                        alignment["nearest_segment_forward_m"],
+                                        alignment["nearest_segment_left_m"],
+                                        reason,
+                                    ),
+                                    flush=True,
+                                )
                             if wall_ok:
                                 plan = PlanResult(
                                     "AVOIDING", shadow_locked_path,
