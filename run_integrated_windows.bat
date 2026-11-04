@@ -1,9 +1,9 @@
 @echo off
 setlocal EnableExtensions
 cd /d "%~dp0"
-set "PYTHON=%CD%\.venv\Scripts\python.exe"
+set "PYTHON=%CD%\.venv38\Scripts\python.exe"
 if not exist "%PYTHON%" (
-  echo [ERROR] Python virtual environment missing: .venv\Scripts\python.exe
+  echo [ERROR] Python 3.8 virtual environment missing: .venv38\Scripts\python.exe
   exit /b 1
 )
 set "DRIVE_FLAG="
