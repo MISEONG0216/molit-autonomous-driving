@@ -1045,6 +1045,13 @@ def main():
                 f"AVOID={static_active} / STOP={static_stop} / "
                 f"OBJ={static_plan['obstacle_id'] if static_fresh else None}"
             )
+            if shadow_active:
+                print(
+                    f"SHADOW LIDAR: reason={static_plan.get('reason', '') if static_fresh else 'NO_FRESH_RESULT'} "
+                    f"/ latch={static_plan.get('latch_state', '') if static_fresh else 'STALE'} "
+                    f"/ scan={static_plan.get('scan', 0)} / age={static_age:.2f}s "
+                    f"/ required_max_age={min(static_timeout_sec, float(missions.get('gps_shadow_ego_planner', {}).get('max_result_age_sec', 1.6))):.2f}s"
+                )
             print(
                 f"PEDESTRIAN  : {pedestrian_state} / ZONE={pedestrian_in_zone} "
                 f"/ RISK={pedestrian_result['risk'] if pedestrian_fresh else None} "
